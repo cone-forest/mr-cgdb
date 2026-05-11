@@ -1,0 +1,4 @@
+# Deprecated file kept for compatibility.
+# Use:
+# - config/seeds_positive.txt
+# - config/seeds_negative.txt

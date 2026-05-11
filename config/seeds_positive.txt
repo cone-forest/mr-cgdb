@@ -1,0 +1,13 @@
+@InProceedings{CGGMPS05,
+  author       = "Cignoni, Paolo and Ganovelli, Fabio and Gobbetti, Enrico and Marton, Fabio and Ponchio, Federico and Scopigno, Roberto",
+  title        = "Batched Multi Triangulation",
+  booktitle    = "Proceedings IEEE Visualization",
+  pages        = "207-214",
+  month        = "October",
+  year         = "2005",
+  publisher    = "IEEE Computer Society Press",
+  address      = "Conference held in Minneapolis, MI, USA",
+  keywords     = "cluster level of detail, batched updates, multi triangulation, geometric simplification",
+  abstract     = "A scalable multiresolution representation for large terrain and geometric models that organizes updates in batched form, enabling efficient view-dependent refinement and rendering.",
+  url          = "http://vcg.isti.cnr.it/Publications/2005/CGGMPS05"
+}

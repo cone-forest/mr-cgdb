@@ -1,0 +1,9 @@
+# One keyword phrase per line; any match passes keyword stage.
+clustered level of detail
+cluster level of detail
+cluster lod
+hierarchical level of detail
+lod
+level of detail
+mesh simplification
+out-of-core rendering
