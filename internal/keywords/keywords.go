@@ -12,6 +12,17 @@ type Matcher struct {
 	phrases []string
 }
 
+func New(phrases []string) *Matcher {
+	var out []string
+	for _, p := range phrases {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return &Matcher{phrases: out}
+}
+
 // Load reads one phrase per line, ignores empty and # comments.
 func Load(path string) (*Matcher, error) {
 	f, err := os.Open(path)
@@ -34,7 +45,7 @@ func Load(path string) (*Matcher, error) {
 	if err := s.Err(); err != nil {
 		return nil, err
 	}
-	return &Matcher{phrases: phrases}, nil
+	return New(phrases), nil
 }
 
 // MatchText returns true if any phrase is a substring of hay.

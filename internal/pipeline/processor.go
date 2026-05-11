@@ -115,7 +115,12 @@ func (p *Processor) Process(ctx context.Context, id int64) error {
 			return e
 		}
 	}
-	sys := p.Opt.SystemPrompt
+	sys := strings.TrimSpace(p.Opt.SystemPrompt)
+	if cfg, e := store.GetSystemConfig(ctx, p.Pool); e == nil {
+		if strings.TrimSpace(cfg.LLMSystemPrompt) != "" {
+			sys = strings.TrimSpace(cfg.LLMSystemPrompt)
+		}
+	}
 	if sys == "" {
 		sys = `You are a strict classifier. Given title and abstract, respond with JSON only: {"relevant":true} if the work is clearly about cluster / hierarchical / LOD in computer graphics research; otherwise {"relevant":false}.`
 	}

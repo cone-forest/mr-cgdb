@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"mr-cgdb/internal/identity"
 	"mr-cgdb/internal/keywords"
@@ -31,7 +32,7 @@ func main() {
 	kf := getenv("KEYWORDS_FILE", "/config/keywords.txt")
 	negTitleKeywords := splitCSV(getenv("NEGATIVE_TITLE_KEYWORDS", "gaussian,splatt"))
 
-	m, err := keywords.Load(kf)
+	defaultMatcher, err := keywords.Load(kf)
 	if err != nil {
 		log.Fatalf("keywords: %v", err)
 	}
@@ -44,6 +45,42 @@ func main() {
 		log.Fatal(err)
 	}
 	defer pool.Close()
+
+	var cfgMu sync.RWMutex
+	activeMatcher := defaultMatcher
+	activeNegTitleKeywords := negTitleKeywords
+	refreshConfig := func() {
+		cfg, err := store.GetSystemConfig(ctx, pool)
+		if err != nil {
+			log.Printf("keyword config refresh failed: %v", err)
+			return
+		}
+		cfgMu.Lock()
+		if len(cfg.PositiveKeywords) > 0 {
+			activeMatcher = keywords.New(cfg.PositiveKeywords)
+		} else {
+			activeMatcher = defaultMatcher
+		}
+		if len(cfg.NegativeTitleKeywords) > 0 {
+			activeNegTitleKeywords = cfg.NegativeTitleKeywords
+		} else {
+			activeNegTitleKeywords = negTitleKeywords
+		}
+		cfgMu.Unlock()
+	}
+	refreshConfig()
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refreshConfig()
+			}
+		}
+	}()
 
 	var pMu sync.Mutex
 	var pconn net.Conn
@@ -75,7 +112,11 @@ func main() {
 			if err := wire.ReadFrame(c, &it); err != nil {
 				return
 			}
-			if titleHasAny(it.Title, negTitleKeywords) {
+			cfgMu.RLock()
+			m := activeMatcher
+			neg := append([]string(nil), activeNegTitleKeywords...)
+			cfgMu.RUnlock()
+			if titleHasAny(it.Title, neg) {
 				continue
 			}
 			blob := strings.ToLower(it.Title) + " " + strings.ToLower(it.Abstract)

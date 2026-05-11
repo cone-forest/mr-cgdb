@@ -69,3 +69,30 @@ func AddRSSFeed(ctx context.Context, p *pgxpool.Pool, url string) (int64, error)
 	`, url).Scan(&id)
 	return id, err
 }
+
+func ReplaceRSSFeeds(ctx context.Context, p *pgxpool.Pool, urls []string) error {
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `DELETE FROM rss_feeds`); err != nil {
+		return err
+	}
+	seen := map[string]struct{}{}
+	for _, raw := range urls {
+		u := strings.TrimSpace(raw)
+		if u == "" {
+			continue
+		}
+		if _, ok := seen[u]; ok {
+			continue
+		}
+		seen[u] = struct{}{}
+		if _, err := tx.Exec(ctx, `INSERT INTO rss_feeds (url, enabled) VALUES ($1, true)`, u); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}

@@ -187,6 +187,45 @@ func (c *Client) ChatDeepVerify(ctx context.Context, system, user string) (usefu
 	return m.Useful, m.Reason, raw, nil
 }
 
+// ChatJSON asks the model for JSON output and returns raw content.
+func (c *Client) ChatJSON(ctx context.Context, system, user string) (raw string, err error) {
+	body := map[string]any{
+		"model": c.ChatModel,
+		"messages": []map[string]string{
+			{"role": "system", "content": system},
+			{"role": "user", "content": user},
+		},
+		"stream": false,
+		"format": "json",
+		"options": map[string]any{
+			"temperature": 0.2,
+		},
+	}
+	b, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/chat", bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("ollama chat: %s", resp.Status)
+	}
+	var out struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	return out.Message.Content, nil
+}
+
 // Pull ensures a model exists locally in the Ollama service.
 func (c *Client) Pull(ctx context.Context, model string) error {
 	body := map[string]any{

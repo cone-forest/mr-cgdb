@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,6 +43,9 @@ func main() {
 		dedupAddr = "dedup:9001"
 	}
 	arxivCat := getenv("ARXIV_SCAN_CATEGORY", "cs.GR")
+	defaultArxivQuery := getenv("ARXIV_QUERY", "search_query=cat:cs.GR&sortBy=submittedDate&sortOrder=descending&start=0&max_results=200")
+	keywordsFile := getenv("KEYWORDS_FILE", "/config/keywords.txt")
+	defaultNegTitleKeywords := splitCSV(getenv("NEGATIVE_TITLE_KEYWORDS", "gaussian,splatt"))
 	negativeSeedsFile := getenv("SEEDS_NEGATIVE_FILE", "/config/seeds_negative.txt")
 	ollamaBase := getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 	deepVerifyModel := getenv("DEEP_VERIFY_MODEL", getenv("CHAT_MODEL", "llama3.2:1b"))
@@ -56,6 +60,7 @@ func main() {
 	}
 	defer db.Close()
 	oc := ollama.NewDefault(ollamaBase, "", deepVerifyModel)
+	defaultPosKeywords := readKeywordFile(keywordsFile)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
@@ -90,6 +95,113 @@ func main() {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": feeds})
+	})
+	r.Get("/api/config", func(w http.ResponseWriter, r *http.Request) {
+		cfg, err := store.GetSystemConfig(r.Context(), db)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		feeds, err := store.ListRSSFeeds(r.Context(), db)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		eff := effectiveConfig(
+			cfg,
+			defaultPosKeywords,
+			defaultNegTitleKeywords,
+			defaultArxivQuery,
+			defaultPipelinePrompt(),
+		)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"config":   eff,
+			"rssFeeds": rssFeedURLs(feeds),
+		})
+	})
+	r.Post("/api/config", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			DomainName            *string   `json:"domainName"`
+			PositiveKeywords      *[]string `json:"positiveKeywords"`
+			NegativeTitleKeywords *[]string `json:"negativeTitleKeywords"`
+			LLMSystemPrompt       *string   `json:"llmSystemPrompt"`
+			ArxivQuery            *string   `json:"arxivQuery"`
+			RSSFeeds              *[]string `json:"rssFeeds"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		cfg, err := store.GetSystemConfig(r.Context(), db)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if req.DomainName != nil {
+			cfg.DomainName = strings.TrimSpace(*req.DomainName)
+		}
+		if req.PositiveKeywords != nil {
+			cfg.PositiveKeywords = normalizeList(*req.PositiveKeywords, true)
+		}
+		if req.NegativeTitleKeywords != nil {
+			cfg.NegativeTitleKeywords = normalizeList(*req.NegativeTitleKeywords, true)
+		}
+		if req.LLMSystemPrompt != nil {
+			cfg.LLMSystemPrompt = strings.TrimSpace(*req.LLMSystemPrompt)
+		}
+		if req.ArxivQuery != nil {
+			cfg.ArxivQuery = strings.TrimSpace(*req.ArxivQuery)
+		}
+		if err := store.UpsertSystemConfig(r.Context(), db, cfg); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if req.RSSFeeds != nil {
+			if err := store.ReplaceRSSFeeds(r.Context(), db, normalizeList(*req.RSSFeeds, false)); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		feeds, err := store.ListRSSFeeds(r.Context(), db)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		eff := effectiveConfig(
+			cfg,
+			defaultPosKeywords,
+			defaultNegTitleKeywords,
+			defaultArxivQuery,
+			defaultPipelinePrompt(),
+		)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":       true,
+			"config":   eff,
+			"rssFeeds": rssFeedURLs(feeds),
+		})
+	})
+	r.Post("/api/config/generate", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Domain string `json:"domain"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		domain := strings.TrimSpace(req.Domain)
+		if domain == "" {
+			writeErr(w, http.StatusBadRequest, errBadRequest("domain required"))
+			return
+		}
+		gen, rss, err := generateDomainConfig(r.Context(), oc, domain)
+		if err != nil {
+			log.Printf("config generate warning: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":                true,
+			"config":            gen,
+			"suggestedRssFeeds": rss,
+		})
 	})
 	r.Post("/api/rss-feeds", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -395,6 +507,186 @@ func getenv(k, d string) string {
 		return v
 	}
 	return d
+}
+
+func defaultPipelinePrompt() string {
+	return `You are a strict classifier. Given title and abstract, respond with JSON only: {"relevant":true} if the work is clearly about cluster / hierarchical / LOD in computer graphics research; otherwise {"relevant":false}.`
+}
+
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if v := strings.TrimSpace(p); v != "" {
+			out = append(out, strings.ToLower(v))
+		}
+	}
+	return out
+}
+
+func normalizeList(in []string, lower bool) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, v := range in {
+		s := strings.TrimSpace(v)
+		if s == "" {
+			continue
+		}
+		if lower {
+			s = strings.ToLower(s)
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func readKeywordFile(path string) []string {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var out []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, strings.ToLower(line))
+	}
+	return normalizeList(out, true)
+}
+
+func rssFeedURLs(feeds []store.RSSFeed) []string {
+	out := make([]string, 0, len(feeds))
+	for _, f := range feeds {
+		out = append(out, f.URL)
+	}
+	return out
+}
+
+func effectiveConfig(cfg *store.SystemConfig, fallbackPos, fallbackNeg []string, fallbackArxivQuery, fallbackPrompt string) *store.SystemConfig {
+	out := &store.SystemConfig{}
+	if cfg != nil {
+		*out = *cfg
+	}
+	if len(out.PositiveKeywords) == 0 {
+		out.PositiveKeywords = normalizeList(fallbackPos, true)
+	}
+	if len(out.NegativeTitleKeywords) == 0 {
+		out.NegativeTitleKeywords = normalizeList(fallbackNeg, true)
+	}
+	if strings.TrimSpace(out.ArxivQuery) == "" {
+		out.ArxivQuery = strings.TrimSpace(fallbackArxivQuery)
+	}
+	if strings.TrimSpace(out.LLMSystemPrompt) == "" {
+		out.LLMSystemPrompt = fallbackPrompt
+	}
+	return out
+}
+
+func generateDomainConfig(ctx context.Context, oc *ollama.Client, domain string) (*store.SystemConfig, []string, error) {
+	base := fallbackGeneratedConfig(domain)
+	sys := "You generate strict JSON for configuring a scientific paper filtering pipeline."
+	usr := fmt.Sprintf(
+		`Domain: %s
+Return JSON only with exactly these fields:
+{
+  "domainName": string,
+  "positiveKeywords": string[],
+  "negativeTitleKeywords": string[],
+  "llmSystemPrompt": string,
+  "arxivQuery": string,
+  "suggestedRssFeeds": string[]
+}
+Guidelines:
+- Keep positiveKeywords concise (8-20 entries), lowercased phrases.
+- negativeTitleKeywords should avoid common false-positive wording for this domain.
+- llmSystemPrompt must classify relevance strictly for this domain.
+- arxivQuery must be a valid arXiv API query string, include sortBy=submittedDate and sortOrder=descending.
+- suggestedRssFeeds should be plausible URLs (can be empty if unknown).`,
+		domain,
+	)
+	chatCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	raw, err := oc.ChatJSON(chatCtx, sys, usr)
+	if err != nil {
+		return base, nil, err
+	}
+	var out struct {
+		DomainName            string   `json:"domainName"`
+		PositiveKeywords      []string `json:"positiveKeywords"`
+		NegativeTitleKeywords []string `json:"negativeTitleKeywords"`
+		LLMSystemPrompt       string   `json:"llmSystemPrompt"`
+		ArxivQuery            string   `json:"arxivQuery"`
+		SuggestedRSSFeeds     []string `json:"suggestedRssFeeds"`
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return base, nil, fmt.Errorf("generator parse failed: %w", err)
+	}
+	cfg := &store.SystemConfig{
+		DomainName:            strings.TrimSpace(out.DomainName),
+		PositiveKeywords:      normalizeList(out.PositiveKeywords, true),
+		NegativeTitleKeywords: normalizeList(out.NegativeTitleKeywords, true),
+		LLMSystemPrompt:       strings.TrimSpace(out.LLMSystemPrompt),
+		ArxivQuery:            strings.TrimSpace(out.ArxivQuery),
+	}
+	if cfg.DomainName == "" {
+		cfg.DomainName = base.DomainName
+	}
+	if len(cfg.PositiveKeywords) == 0 {
+		cfg.PositiveKeywords = base.PositiveKeywords
+	}
+	if len(cfg.NegativeTitleKeywords) == 0 {
+		cfg.NegativeTitleKeywords = base.NegativeTitleKeywords
+	}
+	if cfg.LLMSystemPrompt == "" {
+		cfg.LLMSystemPrompt = base.LLMSystemPrompt
+	}
+	if cfg.ArxivQuery == "" {
+		cfg.ArxivQuery = base.ArxivQuery
+	}
+	return cfg, normalizeList(out.SuggestedRSSFeeds, false), nil
+}
+
+func fallbackGeneratedConfig(domain string) *store.SystemConfig {
+	d := strings.TrimSpace(domain)
+	if d == "" {
+		d = "computer graphics"
+	}
+	dLower := strings.ToLower(d)
+	return &store.SystemConfig{
+		DomainName: d,
+		PositiveKeywords: normalizeList([]string{
+			dLower + " methodology",
+			dLower + " rendering",
+			dLower + " simulation",
+			dLower + " optimization",
+			"benchmark",
+			"state of the art",
+			"real-time",
+			"hierarchical",
+		}, true),
+		NegativeTitleKeywords: normalizeList([]string{
+			"call for papers",
+			"workshop",
+			"tutorial",
+			"position paper",
+			"dataset release",
+		}, true),
+		LLMSystemPrompt: fmt.Sprintf(
+			`You are a strict classifier for %s research. Given title and abstract, respond with JSON only: {"relevant":true} when the paper is clearly in-domain and methodologically useful; otherwise {"relevant":false}.`,
+			d,
+		),
+		ArxivQuery: fmt.Sprintf(
+			"search_query=all:%s&sortBy=submittedDate&sortOrder=descending&start=0&max_results=200",
+			url.QueryEscape(d),
+		),
+	}
 }
 
 func appendNegativeSeedBibTex(path string, p *store.PaperRow) error {

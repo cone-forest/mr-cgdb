@@ -31,6 +31,14 @@
     .actions { display: flex; gap: 8px; }
     .deep-result { margin-top: 6px; color: #c7d9ff; font-size: 13px; }
     .collapsed .summary, .collapsed .actions { display: none; }
+    .config-panel { border: 1px solid #333; border-radius: 8px; padding: 12px; max-width: 1000px; }
+    .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .config-row { display: flex; flex-direction: column; gap: 6px; }
+    .config-row.full { grid-column: 1 / -1; }
+    .config-row input, .config-row textarea { background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 8px; }
+    .config-row textarea { min-height: 120px; resize: vertical; font-family: ui-monospace, monospace; font-size: 13px; }
+    .config-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .muted { color: #b7b7b7; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -39,6 +47,7 @@
     <div class="tabs">
       <button id="tabDigest" class="active">Digest</button>
       <button id="tabPending">Pending</button>
+      <button id="tabConfig">Configuration</button>
     </div>
     <div class="scanbar">
       <span>Scan arXiv range:</span>
@@ -62,12 +71,54 @@
   <main>
     <section id="digestView"></section>
     <section id="pendingView" class="hidden"></section>
+    <section id="configView" class="hidden">
+      <div class="config-panel">
+        <div class="config-grid">
+          <div class="config-row">
+            <label for="cfgDomain">Domain</label>
+            <input id="cfgDomain" type="text" placeholder="computer graphics, robotics, biology..." />
+          </div>
+          <div class="config-row">
+            <label for="cfgGenerateDomain">Generate from domain</label>
+            <input id="cfgGenerateDomain" type="text" placeholder="e.g. computational neuroscience" />
+          </div>
+          <div class="config-row full">
+            <label for="cfgPrompt">LLM system prompt</label>
+            <textarea id="cfgPrompt"></textarea>
+          </div>
+          <div class="config-row full">
+            <label for="cfgArxivQuery">arXiv query</label>
+            <textarea id="cfgArxivQuery"></textarea>
+            <span class="muted">Example: search_query=cat:cs.GR&sortBy=submittedDate&sortOrder=descending&start=0&max_results=200</span>
+          </div>
+          <div class="config-row">
+            <label for="cfgPosKeywords">Positive keywords (one per line)</label>
+            <textarea id="cfgPosKeywords"></textarea>
+          </div>
+          <div class="config-row">
+            <label for="cfgNegKeywords">Negative title keywords (one per line)</label>
+            <textarea id="cfgNegKeywords"></textarea>
+          </div>
+          <div class="config-row full">
+            <label for="cfgRssFeeds">RSS sources watched (one URL per line)</label>
+            <textarea id="cfgRssFeeds"></textarea>
+          </div>
+        </div>
+        <div class="config-actions">
+          <button id="cfgGenerateBtn">Generate configuration</button>
+          <button id="cfgSaveBtn">Save configuration</button>
+          <span id="cfgStatus" class="scan-status"></span>
+        </div>
+      </div>
+    </section>
   </main>
 <script>
 const digestView = document.getElementById("digestView");
 const pendingView = document.getElementById("pendingView");
 const tabDigest = document.getElementById("tabDigest");
 const tabPending = document.getElementById("tabPending");
+const tabConfig = document.getElementById("tabConfig");
+const configView = document.getElementById("configView");
 const scanFrom = document.getElementById("scanFrom");
 const scanTo = document.getElementById("scanTo");
 const scanBtn = document.getElementById("scanBtn");
@@ -79,12 +130,24 @@ const newFeedUrl = document.getElementById("newFeedUrl");
 const feedStatus = document.getElementById("feedStatus");
 const feedsPanel = document.getElementById("feedsPanel");
 const feedsList = document.getElementById("feedsList");
+const cfgDomain = document.getElementById("cfgDomain");
+const cfgGenerateDomain = document.getElementById("cfgGenerateDomain");
+const cfgPrompt = document.getElementById("cfgPrompt");
+const cfgArxivQuery = document.getElementById("cfgArxivQuery");
+const cfgPosKeywords = document.getElementById("cfgPosKeywords");
+const cfgNegKeywords = document.getElementById("cfgNegKeywords");
+const cfgRssFeeds = document.getElementById("cfgRssFeeds");
+const cfgGenerateBtn = document.getElementById("cfgGenerateBtn");
+const cfgSaveBtn = document.getElementById("cfgSaveBtn");
+const cfgStatus = document.getElementById("cfgStatus");
+let configLoaded = false;
 const collapsed = new Set(JSON.parse(localStorage.getItem("collapsedIrrelevant") || "[]"));
 const deepState = new Map(); // paperId -> { status: "idle|running|done|error", message: string }
 let deepVerifyInFlight = 0;
 
 tabDigest.onclick = () => showTab("digest");
 tabPending.onclick = () => showTab("pending");
+tabConfig.onclick = () => showTab("config");
 
 const today = new Date();
 const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -158,10 +221,17 @@ addFeedBtn.onclick = async () => {
 };
 function showTab(t) {
   const isDigest = t === "digest";
+  const isPending = t === "pending";
+  const isConfig = t === "config";
   digestView.classList.toggle("hidden", !isDigest);
-  pendingView.classList.toggle("hidden", isDigest);
+  pendingView.classList.toggle("hidden", !isPending);
+  configView.classList.toggle("hidden", !isConfig);
   tabDigest.classList.toggle("active", isDigest);
-  tabPending.classList.toggle("active", !isDigest);
+  tabPending.classList.toggle("active", isPending);
+  tabConfig.classList.toggle("active", isConfig);
+  if (isConfig && !configLoaded) {
+    reloadConfig();
+  }
 }
 
 async function post(url, body) {
@@ -284,6 +354,75 @@ async function reload() {
   }
 }
 
+async function reloadConfig() {
+  cfgStatus.textContent = "Loading configuration...";
+  try {
+    const r = await fetch("/api/config");
+    const data = await r.json();
+    const cfg = data.config || {};
+    cfgDomain.value = cfg.domainName || "";
+    cfgPrompt.value = cfg.llmSystemPrompt || "";
+    cfgArxivQuery.value = cfg.arxivQuery || "";
+    cfgPosKeywords.value = linesFromArray(cfg.positiveKeywords || []);
+    cfgNegKeywords.value = linesFromArray(cfg.negativeTitleKeywords || []);
+    cfgRssFeeds.value = linesFromArray(data.rssFeeds || []);
+    configLoaded = true;
+    cfgStatus.textContent = "Configuration loaded.";
+  } catch (e) {
+    cfgStatus.textContent = `Failed to load config: ${String(e.message || e)}`;
+  }
+}
+
+cfgGenerateBtn.onclick = async () => {
+  const domain = (cfgGenerateDomain.value || cfgDomain.value || "").trim();
+  if (!domain) {
+    cfgStatus.textContent = "Enter a domain to generate configuration.";
+    return;
+  }
+  cfgGenerateBtn.disabled = true;
+  cfgStatus.textContent = "Generating...";
+  try {
+    const res = await post("/api/config/generate", { domain });
+    const cfg = res.config || {};
+    cfgDomain.value = cfg.domainName || domain;
+    cfgPrompt.value = cfg.llmSystemPrompt || "";
+    cfgArxivQuery.value = cfg.arxivQuery || "";
+    cfgPosKeywords.value = linesFromArray(cfg.positiveKeywords || []);
+    cfgNegKeywords.value = linesFromArray(cfg.negativeTitleKeywords || []);
+    if ((res.suggestedRssFeeds || []).length > 0) {
+      cfgRssFeeds.value = linesFromArray(res.suggestedRssFeeds);
+    }
+    cfgStatus.textContent = "Generated. Review and save.";
+  } catch (e) {
+    cfgStatus.textContent = `Generate failed: ${String(e.message || e)}`;
+  } finally {
+    cfgGenerateBtn.disabled = false;
+  }
+};
+
+cfgSaveBtn.onclick = async () => {
+  cfgSaveBtn.disabled = true;
+  cfgStatus.textContent = "Saving...";
+  try {
+    await post("/api/config", {
+      domainName: (cfgDomain.value || "").trim(),
+      llmSystemPrompt: (cfgPrompt.value || "").trim(),
+      arxivQuery: (cfgArxivQuery.value || "").trim(),
+      positiveKeywords: arrayFromLines(cfgPosKeywords.value || ""),
+      negativeTitleKeywords: arrayFromLines(cfgNegKeywords.value || ""),
+      rssFeeds: arrayFromLines(cfgRssFeeds.value || "")
+    });
+    cfgStatus.textContent = "Saved.";
+    if (!feedsPanel.classList.contains("hidden")) {
+      await reloadFeeds();
+    }
+  } catch (e) {
+    cfgStatus.textContent = `Save failed: ${String(e.message || e)}`;
+  } finally {
+    cfgSaveBtn.disabled = false;
+  }
+};
+
 function bindDeepVerify(el, paperId) {
   const btn = el.querySelector("button[data-a='deep-verify']");
   const out = el.querySelector(".deep-result");
@@ -355,6 +494,17 @@ function toDateInput(d) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function linesFromArray(items) {
+  return (items || []).join("\n");
+}
+
+function arrayFromLines(s) {
+  return String(s || "")
+    .split("\n")
+    .map(v => v.trim())
+    .filter(Boolean);
 }
 
 reload();
