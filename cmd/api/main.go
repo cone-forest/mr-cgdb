@@ -23,9 +23,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
+	"mr-cgdb/internal/arxiv"
 	"mr-cgdb/internal/keywords"
+	"mr-cgdb/internal/netx"
 	"mr-cgdb/internal/ollama"
 	"mr-cgdb/internal/store"
+	"mr-cgdb/internal/wire"
 )
 
 const (
@@ -120,6 +123,7 @@ func main() {
 
 	r.Get("/api/jobs/failures", a.withAuth(false, a.handleJobFailures))
 	r.Post("/api/jobs/{id}/retry", a.withAuth(true, a.handleRetryJob))
+	r.Post("/api/admin/ingest/arxiv-rescan", a.withAuth(true, a.handleAdminArxivRescan))
 
 	// Legacy endpoints after hard cutover.
 	r.Get("/api/digests", legacyGone)
@@ -564,7 +568,132 @@ func (a *app) handleProfileAnalysisCandidates(w http.ResponseWriter, r *http.Req
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"profile": prof, "items": items})
+	hasRows, hasEn, nPapers, mErr := store.ProfileFeedMeta(r.Context(), a.db, profileID)
+	meta := map[string]any{}
+	if mErr == nil {
+		meta["hasSourceRows"] = hasRows
+		meta["hasEnabledSource"] = hasEn
+		meta["papersInDatabase"] = nPapers
+		switch {
+		case nPapers == 0:
+			meta["hint"] = "The database has no papers yet. Run an arXiv rescan (admin tools) or wait for the arXiv/RSS watchers."
+		case hasRows && !hasEn:
+			meta["hint"] = "All sources on this profile are disabled. Enable a subscription in Profile settings or clear sources to use the global ingest feed."
+		case !hasRows:
+			meta["hint"] = "No subscriptions configured — the feed shows every paper the global pipeline has ingested (matching your configured global keywords file)."
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"profile": prof, "items": items, "meta": meta})
+}
+
+func (a *app) handleAdminArxivRescan(w http.ResponseWriter, r *http.Request, auth *authContext) {
+	if auth == nil || auth.User == nil || !auth.User.IsAdmin {
+		writeErr(w, http.StatusForbidden, errBadRequest("admin only"))
+		return
+	}
+	dedup := strings.TrimSpace(os.Getenv("DEDUP_ADDR"))
+	if dedup == "" {
+		writeErr(w, http.StatusBadRequest, errBadRequest("DEDUP_ADDR is not set"))
+		return
+	}
+	var req struct {
+		Since      string `json:"since"`
+		Until      string `json:"until"`
+		InnerQuery string `json:"innerQuery"`
+		MaxPages   int    `json:"maxPages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	until := time.Now().UTC()
+	if strings.TrimSpace(req.Until) != "" {
+		t, err := time.Parse(time.RFC3339, strings.TrimSpace(req.Until))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, errBadRequest("until must be RFC3339"))
+			return
+		}
+		until = t.UTC()
+	}
+	since := until.Add(-30 * 24 * time.Hour)
+	if strings.TrimSpace(req.Since) != "" {
+		t, err := time.Parse(time.RFC3339, strings.TrimSpace(req.Since))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, errBadRequest("since must be RFC3339"))
+			return
+		}
+		since = t.UTC()
+	}
+	if !until.After(since) {
+		writeErr(w, http.StatusBadRequest, errBadRequest("until must be after since"))
+		return
+	}
+	if until.Sub(since) > 366*24*time.Hour {
+		writeErr(w, http.StatusBadRequest, errBadRequest("window must be at most 366 days"))
+		return
+	}
+	maxPages := req.MaxPages
+	if maxPages <= 0 {
+		maxPages = 15
+	}
+	if maxPages > 40 {
+		maxPages = 40
+	}
+	pageSize := 200
+
+	conn, err := netx.DialTCP(dedup)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	defer conn.Close()
+
+	ctx := r.Context()
+	sent := 0
+	pagesUsed := 0
+loop:
+	for page := 0; page < maxPages; page++ {
+		entries, err := arxiv.SearchPagedInRange(ctx, req.InnerQuery, since, until, page*pageSize, pageSize)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, err)
+			return
+		}
+		pagesUsed = page + 1
+		if len(entries) == 0 {
+			break
+		}
+		for i := range entries {
+			e := &entries[i]
+			it := arxiv.IngestItem(e)
+			if it == nil {
+				continue
+			}
+			if err := wire.WriteFrame(conn, it); err != nil {
+				writeErr(w, http.StatusBadGateway, err)
+				return
+			}
+			sent++
+		}
+		if len(entries) < pageSize {
+			break
+		}
+		if page == maxPages-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			break loop
+		case <-time.After(3 * time.Second):
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                 true,
+		"recordsSentToDedup": sent,
+		"since":              since,
+		"until":              until,
+		"pagesFetched":       pagesUsed,
+		"innerQuery":         strings.TrimSpace(req.InnerQuery),
+	})
 }
 
 func (a *app) handleBackfillProfileAnalysis(w http.ResponseWriter, r *http.Request, auth *authContext) {
@@ -592,7 +721,11 @@ func (a *app) handlePublicProfiles(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	out := make([]store.PublicExploreProfile, 0, len(items))
+	for _, p := range items {
+		out = append(out, store.NewPublicExploreSummary(p))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 func (a *app) handlePublicProfile(w http.ResponseWriter, r *http.Request) {

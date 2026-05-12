@@ -123,6 +123,16 @@ func main() {
 					}
 				}
 			}
+			bare, e := store.ListBareProfileIDs(ctx, pool)
+			if e != nil {
+				log.Printf("list bare profiles: %v", e)
+			} else {
+				for _, pid := range bare {
+					if e := store.EnqueueProfileAnalyzeJob(ctx, pool, pid, id); e != nil {
+						log.Printf("enqueue bare profile analyze pid=%d paper=%d: %v", pid, id, e)
+					}
+				}
+			}
 			job := model.PipelineWork{PaperID: id}
 			if err := dialP(); err != nil {
 				log.Printf("dial pipeline: %v", err)

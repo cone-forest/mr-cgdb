@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"mr-cgdb/internal/arxiv"
-	"mr-cgdb/internal/model"
 	"mr-cgdb/internal/netx"
 	"mr-cgdb/internal/store"
 	"mr-cgdb/internal/wire"
@@ -97,19 +96,7 @@ func main() {
 			if !e.After(lastT, lastID) {
 				continue
 			}
-			aid := e.ArxivID
-			it := &model.IngestItem{
-				Source:   "arxiv",
-				ArxivID:  &aid,
-				Title:    e.Title,
-				Abstract: e.Summary,
-				Authors:  e.Authors,
-				URL:      "https://arxiv.org/abs/" + e.ArxivID,
-			}
-			if e.Year != nil {
-				it.Year = e.Year
-			}
-			if err := wire.WriteFrame(c, it); err != nil {
+			if err := wire.WriteFrame(c, arxiv.IngestItem(e)); err != nil {
 				log.Printf("write dedup: %v", err)
 				_ = c.Close()
 				c = nil

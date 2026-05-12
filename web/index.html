@@ -3,85 +3,540 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>mr-cgdb</title>
+  <title>Paper Profiles</title>
   <style>
-    body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #eee; }
-    header { padding: 10px 14px; border-bottom: 1px solid #333; position: sticky; top: 0; background: #111; z-index: 10; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-    .brand { font-weight: 700; font-size: 18px; margin-right: 8px; }
-    select, input, textarea, button { background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 7px 9px; }
-    button { cursor: pointer; background: #222; }
-    button:hover { background: #2a2a2a; }
-    main { padding: 14px; max-width: 1200px; }
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-2: #21262d;
+      --border: #30363d;
+      --border-muted: #21262d;
+      --text: #f0f6fc;
+      --text-muted: #8b949e;
+      --text-subtle: #6e7681;
+      --hover: rgba(240,246,252,0.08);
+      --focus: #58a6ff;
+      --shadow: rgba(1, 4, 9, 0.85);
+      --radius: 6px;
+      --radius-lg: 12px;
+      --font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      --ease: cubic-bezier(0.2, 0, 0, 1);
+      --fz-sm: 12px;
+      --fz-body: 14px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: var(--font);
+      font-size: var(--fz-body);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+    button, select, input, textarea {
+      font: inherit;
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 10px;
+      transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+    }
+    button {
+      cursor: pointer;
+      background: var(--surface-2);
+      font-weight: 600;
+    }
+    button:hover { background: var(--hover); border-color: #8b949e; }
+    button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+    input::placeholder, textarea::placeholder { color: var(--text-subtle); }
+    textarea { display: block; width: 100%; resize: vertical; min-height: 88px; }
+
+    /* --- Top bar --- */
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(22,27,34,0.92);
+      border-bottom: 1px solid var(--border-muted);
+      backdrop-filter: saturate(140%) blur(8px);
+    }
+    .header-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 16px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .product-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+      color: var(--text);
+      flex-shrink: 0;
+      padding-right: 8px;
+      border-right: 1px solid var(--border);
+    }
+    .product-mark svg { opacity: 0.9; }
+    .global-nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .nav-link {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: var(--radius);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: var(--fz-sm);
+      transition: background 0.15s var(--ease), color 0.15s var(--ease);
+      text-decoration: none !important;
+    }
+    .nav-link:hover { background: var(--hover); color: var(--text); }
+    .nav-link.is-active { background: rgba(240,246,252,0.12); color: var(--text); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* Avatar dropdown */
+    .menu-wrap {
+      position: relative;
+    }
+    .avatar-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      padding: 0;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: var(--fz-sm);
+      font-weight: 700;
+      overflow: hidden;
+    }
+    .avatar-btn.anon {
+      border-style: dashed;
+      color: var(--text-muted);
+    }
+    .dropdown {
+      position: absolute;
+      right: 0;
+      margin-top: 8px;
+      min-width: 280px;
+      max-width: min(340px, 92vw);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 16px 32px var(--shadow);
+      padding-top: 6px;
+      padding-bottom: 6px;
+      z-index: 200;
+      animation: drop 0.12s var(--ease);
+    }
+    @keyframes drop {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .dropdown.hidden { display: none !important; }
+    .dropdown-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-muted);
+      display: grid;
+      gap: 4px;
+    }
+    .dropdown-header strong {
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .dropdown-header span {
+      font-size: var(--fz-sm);
+      color: var(--text-muted);
+    }
+    .dropdown-section-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-subtle);
+      padding: 10px 14px 6px;
+    }
+    .dropdown-item {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 14px;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      color: var(--text);
+      font-weight: 600;
+      text-align: left;
+      cursor: pointer;
+      border-bottom: 1px solid transparent;
+      transition: background 0.1s var(--ease);
+      text-decoration: none !important;
+    }
+    .dropdown-item:hover { background: var(--hover); }
+    .dropdown-item small {
+      flex: 1;
+      color: var(--text-muted);
+      font-weight: 500;
+      text-align: right;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 120px;
+    }
+    .dropdown-item.check::after {
+      content: "✓";
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .dropdown-divider { height: 1px; background: var(--border-muted); margin: 6px 0; }
+    .dropdown-footer {
+      padding: 6px 8px;
+    }
+
+    /* Main layout */
+    .page-shell {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px 16px 64px;
+    }
+    .page-hero {
+      margin-bottom: 24px;
+    }
+    .page-hero h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .page-hero p {
+      margin: 10px 0 0;
+      color: var(--text-muted);
+      max-width: 54ch;
+      font-size: 15px;
+    }
+
     .hidden { display: none !important; }
-    .panel { border: 1px solid #333; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
-    .panel .title { background: #1a1a1a; padding: 10px 12px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; }
-    .panel .body { padding: 12px; }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 16px;
+      overflow: clip;
+      transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+    }
+    .panel:hover { border-color: #484f58; }
+    .panel .panel-head {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: rgba(1, 4, 9, 0.25);
+    }
+    .panel .panel-head h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .panel .panel-body {
+      padding: 16px;
+    }
+
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
-    .muted { color: #b7b7b7; font-size: 13px; }
-    .list { display: grid; gap: 10px; }
-    .paper { border: 1px solid #2a2a2a; border-radius: 8px; padding: 10px; }
-    .paper h3 { margin: 0 0 6px 0; font-size: 16px; }
-    .paper h3 a { color: #9ec5ff; text-decoration: none; }
-    .paper h3 a:hover { text-decoration: underline; }
-    .summary { white-space: pre-wrap; max-height: 180px; overflow: auto; color: #ddd; margin: 8px 0; }
-    .tags { color: #9bd6ff; font-size: 12px; }
-    .badge { font-size: 12px; color: #c7d9ff; }
-    .modalBg { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; padding: 16px; }
-    .modal { width: min(680px, 100%); background: #121212; border: 1px solid #333; border-radius: 10px; padding: 12px; }
-    .modal textarea { width: 100%; min-height: 90px; }
-    .modal input { width: 100%; }
-    .status { color: #c7d9ff; font-size: 13px; }
-    #profileCreateBody textarea { width: 100%; min-height: 90px; }
-    #profileCreateBody input { min-width: 220px; }
+    .muted { color: var(--text-muted); font-size: var(--fz-sm); }
+    .toolbar { gap: 10px; }
+    select { min-height: 32px; }
+
+    .explore-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .explore-controls input[type="text"] {
+      flex: 1;
+      min-width: 240px;
+    }
+
+    /* Cards & feed */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+      gap: 16px;
+    }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      background: rgba(22,27,34,0.55);
+      display: grid;
+      gap: 10px;
+      transition: transform 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: #484f58;
+      background: var(--surface);
+    }
+    .card h3 { margin: 0; font-size: 16px; line-height: 1.35; letter-spacing: -0.02em; }
+    .card .slugline { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; color: var(--text-muted); }
+    .explore-card { padding: 0; }
+    .explore-card-link {
+      display: grid;
+      gap: 6px;
+      padding: 16px;
+      height: 100%;
+      box-sizing: border-box;
+      text-decoration: none !important;
+      color: inherit;
+      transition: background 0.12s var(--ease);
+    }
+    .explore-card-link:hover {
+      background: rgba(240, 246, 252, 0.05);
+    }
+    .explore-card-link:hover h3 {
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+    .explore-card-link h3 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .explore-meta {
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .explore-desc {
+      margin: 0;
+      margin-top: 4px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-muted);
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+    }
+    .list { display: grid; gap: 12px; }
+    .paper {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 14px 16px;
+      background: rgba(22,27,34,0.45);
+      border-left: 3px solid transparent;
+      transition: border-left-color 0.15s var(--ease), background 0.15s var(--ease), border-color 0.15s var(--ease);
+    }
+    .paper:hover {
+      border-color: #484f58;
+      border-left-color: var(--text-subtle);
+      background: rgba(22,27,34,0.85);
+    }
+    .paper h3 { margin: 0 0 6px; font-size: 16px; line-height: 1.35; font-weight: 700; letter-spacing: -0.02em; }
+    .paper h3 a {
+      color: var(--text);
+      text-decoration: none !important;
+    }
+    .paper h3 a:hover { text-decoration: underline !important; }
+    .summary {
+      white-space: pre-wrap;
+      max-height: 200px;
+      overflow: auto;
+      margin: 8px 0;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .tags { color: var(--text-muted); font-size: 12px; }
+    .badge {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--text-subtle);
+      font-family: ui-monospace, monospace;
+    }
+
+    /* Auth centered */
+    .auth-layout {
+      min-height: calc(100vh - 140px);
+      display: grid;
+      place-items: center;
+      padding: 40px 16px;
+    }
+    .auth-card {
+      width: min(400px, 100%);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      padding: 28px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+    }
+    .auth-card h1 { margin: 0 0 8px; font-size: 22px; }
+    .auth-card .muted { margin-bottom: 20px; }
+    .field { width: 100%; margin-bottom: 10px; }
+    .divider {
+      margin: 20px 0;
+      border: none;
+      border-top: 1px solid var(--border-muted);
+    }
+
+    /* Modal */
+    .modalBg {
+      position: fixed;
+      inset: 0;
+      background: rgba(1, 4, 9, 0.75);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 300;
+      backdrop-filter: blur(4px);
+    }
+    .modal {
+      width: min(620px, 100%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+      animation: drop 0.15s var(--ease);
+    }
+    .modal h3 { margin: 0 0 14px; font-size: 18px; letter-spacing: -0.02em; }
+
+    #profileCreateBody textarea { margin-top: 10px; }
+    #profileCreateBody input[id^="new"] { min-width: 200px; flex: 1; }
+
+    @media (max-width: 640px) {
+      .header-inner { height: auto; min-height: 56px; padding-top: 10px; padding-bottom: 10px; flex-wrap: wrap; }
+      .global-nav { width: 100%; order: 3; margin-top: 6px; }
+    }
   </style>
 </head>
 <body>
-  <header>
-    <div class="brand">Paper Profiles</div>
-    <select id="profileSelect" class="hidden"></select>
-    <button id="candidateTabBtn" class="hidden">Candidate Papers</button>
-    <button id="relevantTabBtn" class="hidden">Relevant</button>
-    <button id="publicTabBtn">Public Profiles</button>
-    <button id="authTabBtn">Auth</button>
-    <button id="logoutBtn" class="hidden">Logout</button>
-    <span id="authState" class="status"></span>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <a class="product-mark" href="#" id="brandLink" aria-label="Home">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="2" y="2" width="20" height="20" rx="5" stroke="currentColor" stroke-width="1.75"/>
+            <path d="M8 14h8M12 17V7" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+          </svg>
+          Paper Profiles
+        </a>
+        <nav class="global-nav" id="globalNav" aria-label="Primary">
+          <button type="button" class="nav-link is-active" data-route="explore" id="navExplore">Explore</button>
+          <button type="button" class="nav-link hidden auth-only" data-route="feed" id="navFeed">Candidate papers</button>
+          <button type="button" class="nav-link hidden auth-only" data-route="relevant" id="navRelevant">Relevant</button>
+          <button type="button" class="nav-link hidden auth-only" data-route="profiles" id="navProfiles">Profile settings</button>
+          <button type="button" class="nav-link hidden guest-only" data-route="auth" id="navSignIn">Sign in</button>
+        </nav>
+      </div>
+      <div class="header-right">
+        <span id="headerStatus" class="muted hidden" aria-live="polite"></span>
+        <div class="menu-wrap" id="menuWrap">
+          <button type="button" class="avatar-btn anon" id="avatarBtn" title="Account menu" aria-haspopup="true" aria-expanded="false">⋯</button>
+          <div class="dropdown hidden" id="userDropdown" role="menu" aria-labelledby="avatarBtn"></div>
+        </div>
+      </div>
+    </div>
   </header>
 
-  <main>
-    <section id="authView">
+  <div class="page-shell">
+    <section id="publicView">
+      <div class="page-hero">
+        <h1 id="exploreTitle">Explore</h1>
+        <p>Open research profiles curated by contributors. Browse public collections without signing in—or create your own after you join.</p>
+      </div>
       <div class="panel">
-        <div class="title">Auth</div>
-        <div class="body">
-          <div class="row">
-            <input id="regUsername" placeholder="username" autocomplete="off" />
-            <input id="regPassword" type="password" placeholder="password (min 8 chars)" autocomplete="new-password" />
-            <button id="regBtn">Register</button>
+        <div class="panel-head"><h2>Public profiles</h2></div>
+        <div class="panel-body">
+          <div class="explore-controls row toolbar" style="margin-bottom:14px;">
+            <input id="publicSearchQ" type="text" autocomplete="off" placeholder="Find a profile…" aria-label="Search profiles" />
+            <button id="publicSearchBtn" type="button">Search</button>
           </div>
-          <div class="row">
-            <input id="loginUsername" placeholder="username" autocomplete="off" />
-            <input id="loginPassword" type="password" placeholder="password" autocomplete="current-password" />
-            <button id="loginBtn">Login</button>
-          </div>
-          <div id="authStatus" class="muted"></div>
+          <div id="publicProfilesList" class="grid"></div>
         </div>
       </div>
     </section>
 
     <section id="candidateView" class="hidden">
+      <div class="page-hero">
+        <h1>Candidate papers</h1>
+        <p>Ingestion plus profile filters surface papers that match your configured sources.</p>
+      </div>
       <div class="panel">
-        <div class="title">
-          <span>Candidate Papers</span>
-          <span class="row">
-            <button id="reloadCandidatesBtn">Reload</button>
+        <div class="panel-head">
+          <h2>Feed</h2>
+          <div class="row toolbar">
+            <button id="reloadCandidatesBtn" type="button">Reload</button>
             <select id="adminMetricsFilter" class="hidden">
               <option value="all">Metrics: All</option>
-              <option value="keyword">Metrics: Keyword Pass</option>
-              <option value="llm">Metrics: LLM Relevant</option>
-              <option value="auto">Metrics: Would Auto-Download</option>
+              <option value="keyword">Metrics: Keyword pass</option>
+              <option value="llm">Metrics: LLM relevant</option>
+              <option value="auto">Metrics: Would auto-download</option>
             </select>
-          </span>
+          </div>
         </div>
-        <div class="body">
+        <div class="panel-body">
+          <div id="adminArxivPanel" class="hidden panel" style="margin-bottom:14px;background:rgba(22,27,34,0.55);">
+            <div class="panel-head"><h2 style="font-size:15px;margin:0">Administrator · arXiv ingest</h2></div>
+            <div class="panel-body">
+              <p class="muted" style="margin:0 0 12px;font-size:13px;line-height:1.45">Pull extra arXiv results for a <strong>submitted-date window</strong> (same TCP path as the watcher). Queries export.arxiv.org with ~3s pauses between pages; keep windows reasonably small.</p>
+              <div class="row toolbar">
+                <label class="muted" style="display:grid;gap:6px;font-size:12px;">Since (browser local)<br /><input id="rescanSince" type="datetime-local" autocomplete="off" /></label>
+                <label class="muted" style="display:grid;gap:6px;font-size:12px;">Until<br /><input id="rescanUntil" type="datetime-local" autocomplete="off" /></label>
+              </div>
+              <div class="row toolbar">
+                <label class="muted" style="display:grid;gap:6px;flex:1;min-width:220px;font-size:12px;">Inner search (arXiv query syntax)<br /><input id="rescanQuery" type="text" autocomplete="off" placeholder="cat:cs.GR" style="width:100%" /></label>
+                <button type="button" id="arxivRescanBtn">Run rescan</button>
+              </div>
+              <div class="muted" id="arxivRescanStatus"></div>
+            </div>
+          </div>
+          <div class="muted" id="candidateMeta" style="margin-bottom:10px;line-height:1.45;"></div>
           <div class="muted" id="candidateStatus"></div>
           <div id="candidateList" class="list"></div>
         </div>
@@ -89,90 +544,258 @@
     </section>
 
     <section id="relevantView" class="hidden">
+      <div class="page-hero">
+        <h1>Relevant</h1>
+        <p>Your manually curated picks for this research profile—with notes and tags.</p>
+      </div>
       <div class="panel">
-        <div class="title">Relevant Papers</div>
-        <div class="body">
-          <div class="row">
-            <input id="relevantTagFilter" placeholder="filter by tag" />
-            <button id="reloadRelevantBtn">Reload</button>
+        <div class="panel-head"><h2>Your list</h2></div>
+        <div class="panel-body">
+          <div class="row toolbar">
+            <input id="relevantTagFilter" type="text" autocomplete="off" placeholder="Filter by tag" />
+            <button id="reloadRelevantBtn" type="button">Reload</button>
           </div>
           <div id="relevantList" class="list"></div>
         </div>
       </div>
     </section>
 
-    <section id="publicView" class="hidden">
+    <section id="myProfilesView" class="hidden">
+      <div class="page-hero">
+        <h1>Profile settings</h1>
+        <p>Create profiles, tune keywords, prompts, and sources. Profile slugs are immutable once saved.</p>
+      </div>
       <div class="panel">
-        <div class="title">Public Profiles</div>
-        <div class="body">
+        <div class="panel-head">
+          <h2>Create profile</h2>
+          <button type="button" id="toggleCreateProfileBtn">Show</button>
+        </div>
+        <div class="panel-body hidden" id="profileCreateBody">
           <div class="row">
-            <input id="publicSearchQ" placeholder="search profiles" style="min-width: 320px;" />
-            <button id="publicSearchBtn">Search</button>
+            <input id="newProfileSlug" autocomplete="off" placeholder="Slug (immutable)" />
+            <input id="newProfileName" autocomplete="off" placeholder="Display name" />
+            <select id="newProfileVisibility"><option value="private">private</option><option value="public">public</option></select>
           </div>
-          <div id="publicProfilesList" class="list"></div>
+          <div class="row">
+            <button id="createProfileBtn" type="button">Create profile</button>
+            <span id="createProfileStatus" class="muted"></span>
+          </div>
+          <textarea id="newProfileDescription" autocomplete="off" placeholder="Description"></textarea>
+          <textarea id="newProfilePos" autocomplete="off" placeholder="Positive keywords (one per line)"></textarea>
+          <textarea id="newProfileNeg" autocomplete="off" placeholder="Negative title keywords (one per line)"></textarea>
+          <textarea id="newProfilePrompt" autocomplete="off" placeholder="LLM prompt"></textarea>
+          <textarea id="newProfileSources" autocomplete="off" placeholder="Sources, one per line: rss:https://… or arxiv_query:search_query=…"></textarea>
         </div>
       </div>
     </section>
 
-    <section id="myProfilesView" class="hidden">
-      <div class="panel">
-        <div class="title">
-          <span>Create Profile</span>
-          <button id="toggleCreateProfileBtn">Show</button>
-        </div>
-        <div class="body hidden" id="profileCreateBody">
-          <div class="row">
-            <input id="newProfileSlug" autocomplete="off" placeholder="slug (immutable)" />
-            <input id="newProfileName" autocomplete="off" placeholder="display name" />
-            <select id="newProfileVisibility"><option value="private">private</option><option value="public">public</option></select>
+    <section id="authView" class="hidden">
+      <div class="auth-layout">
+        <div class="auth-card">
+          <h1>Welcome</h1>
+          <p class="muted">Sign in to manage research profiles or create a new account.</p>
+          <div class="row field">
+            <input id="regUsername" autocomplete="off" placeholder="Username" aria-label="Register username" style="flex:1" />
           </div>
-          <div class="row">
-            <button id="createProfileBtn">Create Profile</button>
-            <span id="createProfileStatus" class="status"></span>
+          <div class="row field">
+            <input id="regPassword" type="password" autocomplete="new-password" placeholder="Password (min 8 characters)" aria-label="Register password" style="flex:1" />
+            <button id="regBtn" type="button">Register</button>
           </div>
-          <textarea id="newProfileDescription" autocomplete="off" placeholder="description"></textarea>
-          <textarea id="newProfilePos" autocomplete="off" placeholder="positive keywords (one per line)"></textarea>
-          <textarea id="newProfileNeg" autocomplete="off" placeholder="negative title keywords (one per line)"></textarea>
-          <textarea id="newProfilePrompt" autocomplete="off" placeholder="LLM prompt"></textarea>
-          <textarea id="newProfileSources" autocomplete="off" placeholder="sources, one per line: rss:https://... or arxiv_query:search_query=..."></textarea>
+          <hr class="divider" />
+          <div class="row field">
+            <input id="loginUsername" autocomplete="off" placeholder="Username" aria-label="Login username" style="flex:1" />
+          </div>
+          <div class="row field">
+            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Password" aria-label="Login password" style="flex:1" />
+            <button id="loginBtn" type="button">Sign in</button>
+          </div>
+          <div id="authStatus" class="muted" style="margin-top:14px;"></div>
         </div>
       </div>
     </section>
-  </main>
+  </div>
 
   <div id="relevantModalBg" class="modalBg">
     <div class="modal">
       <h3 id="relevantModalTitle">Add to Relevant</h3>
-      <div class="row"><input id="relevantTagsInput" placeholder="tags comma-separated" /></div>
-      <div class="row"><textarea id="relevantNoteInput" placeholder="comment"></textarea></div>
-      <div class="row">
-        <button id="confirmRelevantBtn">Add to Relevant</button>
-        <button id="cancelRelevantBtn">Cancel</button>
+      <div class="row"><input id="relevantTagsInput" type="text" autocomplete="off" placeholder="Tags, comma-separated" style="flex:1" /></div>
+      <div class="row"><textarea id="relevantNoteInput" autocomplete="off" placeholder="Comment"></textarea></div>
+      <div class="row toolbar">
+        <button id="confirmRelevantBtn" type="button">Add to Relevant</button>
+        <button id="cancelRelevantBtn" type="button">Cancel</button>
       </div>
       <div id="relevantModalStatus" class="muted"></div>
     </div>
   </div>
 
 <script>
-const authState = document.getElementById("authState");
 const authView = document.getElementById("authView");
 const candidateView = document.getElementById("candidateView");
 const relevantView = document.getElementById("relevantView");
 const publicView = document.getElementById("publicView");
 const myProfilesView = document.getElementById("myProfilesView");
-const profileSelect = document.getElementById("profileSelect");
 const adminMetricsFilter = document.getElementById("adminMetricsFilter");
+const avatarBtn = document.getElementById("avatarBtn");
+const userDropdown = document.getElementById("userDropdown");
+const menuWrap = document.getElementById("menuWrap");
+const headerStatus = document.getElementById("headerStatus");
+
+const navExplore = document.getElementById("navExplore");
+const navFeed = document.getElementById("navFeed");
+const navRelevant = document.getElementById("navRelevant");
+const navProfiles = document.getElementById("navProfiles");
+const navSignIn = document.getElementById("navSignIn");
+
 let auth = { authenticated: false, user: null, csrfToken: "" };
 let profiles = [];
 let activeProfileId = null;
 let pendingRelevantPaper = null;
+let dropdownOpen = false;
+
+function setDropdownOpen(open) {
+  dropdownOpen = open;
+  userDropdown.classList.toggle("hidden", !open);
+  avatarBtn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function updateAuthChrome() {
+  const authed = !!auth.authenticated;
+  document.querySelectorAll(".auth-only").forEach(el => el.classList.toggle("hidden", !authed));
+  document.querySelectorAll(".guest-only").forEach(el => el.classList.toggle("hidden", authed));
+  adminMetricsFilter.classList.toggle("hidden", !(authed && auth.user && auth.user.isAdmin));
+  document.getElementById("adminArxivPanel").classList.toggle("hidden", !(authed && auth.user && auth.user.isAdmin));
+
+  const u = authed ? (auth.user && auth.user.username) : "";
+  if (authed && u) {
+    avatarBtn.classList.remove("anon");
+    avatarBtn.textContent = u.slice(0, 2).toUpperCase();
+    avatarBtn.title = u;
+  } else {
+    avatarBtn.classList.add("anon");
+    avatarBtn.textContent = "⋯";
+    avatarBtn.title = "Account menu";
+  }
+}
+
+function renderUserDropdown() {
+  userDropdown.innerHTML = "";
+  if (!auth.authenticated) {
+    const sign = document.createElement("button");
+    sign.type = "button";
+    sign.className = "dropdown-item";
+    sign.textContent = "Sign in";
+    sign.onclick = () => { setDropdownOpen(false); showView("auth"); };
+    const explore = document.createElement("button");
+    explore.type = "button";
+    explore.className = "dropdown-item";
+    explore.textContent = "Explore public profiles";
+    explore.onclick = () => { setDropdownOpen(false); showView("explore"); };
+    userDropdown.append(sign, explore);
+    return;
+  }
+
+  const head = document.createElement("div");
+  head.className = "dropdown-header";
+  head.innerHTML = `<strong>Signed in as ${esc(auth.user.username)}</strong><span>${auth.user.isAdmin ? "Administrator" : "Contributor"}</span>`;
+  userDropdown.append(head);
+
+  const pt = document.createElement("div");
+  pt.className = "dropdown-section-title";
+  pt.textContent = "Switch profile";
+  userDropdown.append(pt);
+
+  if (!profiles.length) {
+    const empty = document.createElement("button");
+    empty.type = "button";
+    empty.className = "dropdown-item";
+    empty.innerHTML = `No profiles yet <small>Create one in settings</small>`;
+    empty.onclick = () => { setDropdownOpen(false); showView("profiles"); };
+    userDropdown.append(empty);
+  } else {
+    for (const p of profiles) {
+      const pid = Number(p.id);
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "dropdown-item" + (pid === Number(activeProfileId) ? " check" : "");
+      btn.innerHTML = `${esc(String(p.name))} <small>${esc(String(p.visibility))}</small>`;
+      btn.onclick = async () => {
+        activeProfileId = pid;
+        localStorage.setItem("activeProfileId", String(pid));
+        setDropdownOpen(false);
+        renderUserDropdown();
+        await touchProfileAccess(activeProfileId);
+        if (document.getElementById("candidateView").classList.contains("hidden")) {
+          await reloadRelevant().catch(() => {});
+        } else {
+          await reloadCandidates();
+          await reloadRelevant().catch(() => {});
+        }
+      };
+      userDropdown.append(btn);
+    }
+  }
+
+  const divHR = document.createElement("div");
+  divHR.className = "dropdown-divider";
+  userDropdown.append(divHR);
+
+  const foot = document.createElement("div");
+  foot.className = "dropdown-footer";
+
+  const profBtn = document.createElement("button");
+  profBtn.type = "button";
+  profBtn.className = "dropdown-item";
+  profBtn.textContent = "Profile settings";
+  profBtn.onclick = () => { setDropdownOpen(false); showView("profiles"); };
+
+  const out = document.createElement("button");
+  out.type = "button";
+  out.className = "dropdown-item";
+  out.innerHTML = `Sign out <small>End session</small>`;
+  out.onclick = async () => {
+    setDropdownOpen(false);
+    try { await api("/api/auth/logout", { method: "POST", body: "{}" }); } catch (_) {}
+    auth = { authenticated: false, user: null, csrfToken: "" };
+    profiles = [];
+    activeProfileId = null;
+    updateAuthChrome();
+    renderUserDropdown();
+    showView("explore");
+    await refreshAuth();
+  };
+
+  foot.append(profBtn, out);
+  userDropdown.append(foot);
+}
+
+function setNavActive(route) {
+  document.querySelectorAll(".nav-link[data-route]").forEach(el => {
+    const r = el.getAttribute("data-route");
+    el.classList.toggle("is-active", r === route);
+  });
+}
 
 function showView(name) {
-  authView.classList.toggle("hidden", name !== "auth");
-  candidateView.classList.toggle("hidden", name !== "candidates");
-  relevantView.classList.toggle("hidden", name !== "relevant");
-  publicView.classList.toggle("hidden", name !== "public");
-  myProfilesView.classList.toggle("hidden", !auth.authenticated);
+  const route = name === "public" || name === "explore" ? "explore" : name === "candidates" ? "feed" : name;
+  authView.classList.toggle("hidden", route !== "auth");
+  candidateView.classList.toggle("hidden", route !== "feed");
+  relevantView.classList.toggle("hidden", route !== "relevant");
+  publicView.classList.toggle("hidden", route !== "explore");
+  const showProfiles = auth.authenticated && route === "profiles";
+  myProfilesView.classList.toggle("hidden", !showProfiles);
+  const prof = profiles.find(p => Number(p.id) === Number(activeProfileId));
+  headerStatus.textContent = auth.authenticated && activeProfileId && prof && ["feed", "relevant", "profiles"].includes(route)
+    ? `Working on: ${prof.name}`
+    : "";
+  headerStatus.classList.toggle("hidden", !headerStatus.textContent);
+
+  let highlight = route;
+  if (!auth.authenticated) {
+    highlight = route === "auth" ? "auth" : "explore";
+  } else if (route === "auth") {
+    highlight = "explore";
+  }
+  setNavActive(highlight);
 }
 
 async function api(url, opts = {}) {
@@ -198,72 +821,88 @@ function resetCreateProfileForm() {
 async function refreshAuth() {
   const me = await api("/api/auth/me");
   auth = me || { authenticated: false };
-  document.getElementById("logoutBtn").classList.toggle("hidden", !auth.authenticated);
-  document.getElementById("candidateTabBtn").classList.toggle("hidden", !auth.authenticated);
-  document.getElementById("relevantTabBtn").classList.toggle("hidden", !auth.authenticated);
-  profileSelect.classList.toggle("hidden", !auth.authenticated);
-  authState.textContent = auth.authenticated ? `Signed in as ${auth.user.username}` : "Not signed in";
-  adminMetricsFilter.classList.toggle("hidden", !(auth.authenticated && auth.user && auth.user.isAdmin));
+  updateAuthChrome();
+  renderUserDropdown();
   if (auth.authenticated) await reloadProfiles();
 }
 
 async function reloadProfiles() {
   const data = await api("/api/profiles/me");
   profiles = (data.items || []).map(x => x.profile);
-  profileSelect.innerHTML = "";
-  for (const p of profiles) {
-    const o = document.createElement("option");
-    o.value = String(p.id);
-    o.textContent = `${p.name} (${p.visibility})`;
-    profileSelect.appendChild(o);
-  }
   if (profiles.length === 0) {
     activeProfileId = null;
+    renderUserDropdown();
     return;
   }
   const saved = localStorage.getItem("activeProfileId");
   const found = profiles.find(p => String(p.id) === String(saved)) || profiles[0];
-  profileSelect.value = String(found.id);
   activeProfileId = found.id;
   await touchProfileAccess(activeProfileId);
+  renderUserDropdown();
   await reloadCandidates();
-  await reloadRelevant();
+  await reloadRelevant().catch(() => {});
 }
 
 async function touchProfileAccess(profileId) {
   if (!profileId) return;
   await api(`/api/profiles/${profileId}/access`, { method: "POST", body: "{}" });
   localStorage.setItem("activeProfileId", String(profileId));
+  const data = await api("/api/profiles/me");
+  profiles = (data.items || []).map(x => x.profile);
+  renderUserDropdown();
 }
 
-profileSelect.onchange = async () => {
-  activeProfileId = Number(profileSelect.value || 0);
-  await touchProfileAccess(activeProfileId);
-  await reloadCandidates();
-  await reloadRelevant();
+function padTime(n) { return n < 10 ? "0" + n : String(n); }
+function toDatetimeLocal(d) {
+  return `${d.getFullYear()}-${padTime(d.getMonth() + 1)}-${padTime(d.getDate())}T${padTime(d.getHours())}:${padTime(d.getMinutes())}`;
+}
+function initArxivRescanDefaults() {
+  if (!auth.user || !auth.user.isAdmin) return;
+  const until = document.getElementById("rescanUntil");
+  const since = document.getElementById("rescanSince");
+  const q = document.getElementById("rescanQuery");
+  if (q && !(q.value || "").trim()) q.value = "cat:cs.GR";
+  if (!until.value || !since.value) {
+    const now = new Date();
+    until.value = toDatetimeLocal(now);
+    since.value = toDatetimeLocal(new Date(now.getTime() - 30 * 86400000));
+  }
+}
+
+navExplore.onclick = () => showView("explore");
+navFeed.onclick = async () => { initArxivRescanDefaults(); showView("candidates"); await reloadCandidates(); };
+navRelevant.onclick = async () => { showView("relevant"); await reloadRelevant(); };
+navProfiles.onclick = () => showView("profiles");
+navSignIn.onclick = () => showView("auth");
+
+document.getElementById("brandLink").onclick = (e) => {
+  e.preventDefault();
+  showView("explore");
 };
 
-document.getElementById("authTabBtn").onclick = () => showView("auth");
-document.getElementById("candidateTabBtn").onclick = async () => { showView("candidates"); await reloadCandidates(); };
-document.getElementById("relevantTabBtn").onclick = async () => { showView("relevant"); await reloadRelevant(); };
-document.getElementById("publicTabBtn").onclick = async () => { showView("public"); await reloadPublicProfiles(); };
-document.getElementById("logoutBtn").onclick = async () => {
-  try { await api("/api/auth/logout", { method: "POST", body: "{}" }); } catch (_) {}
-  auth = { authenticated: false, user: null, csrfToken: "" };
-  showView("auth");
-  await refreshAuth();
+avatarBtn.onclick = (e) => {
+  e.stopPropagation();
+  const open = !dropdownOpen;
+  if (open) renderUserDropdown();
+  setDropdownOpen(open);
 };
+document.addEventListener("click", () => setDropdownOpen(false));
+menuWrap.addEventListener("click", (e) => e.stopPropagation());
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") setDropdownOpen(false);
+});
 
 document.getElementById("regBtn").onclick = async () => {
   const username = document.getElementById("regUsername").value.trim();
   const password = document.getElementById("regPassword").value;
   const status = document.getElementById("authStatus");
-  status.textContent = "Registering...";
+  status.textContent = "Creating account…";
   try {
     await api("/api/auth/register", { method: "POST", body: JSON.stringify({ username, password }) });
     await refreshAuth();
+    initArxivRescanDefaults();
     showView("candidates");
-    status.textContent = "Registered.";
+    status.textContent = "Account created.";
   } catch (e) { status.textContent = `Failed: ${e.message}`; }
 };
 
@@ -271,12 +910,13 @@ document.getElementById("loginBtn").onclick = async () => {
   const username = document.getElementById("loginUsername").value.trim();
   const password = document.getElementById("loginPassword").value;
   const status = document.getElementById("authStatus");
-  status.textContent = "Logging in...";
+  status.textContent = "Signing in…";
   try {
     await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
     await refreshAuth();
+    initArxivRescanDefaults();
     showView("candidates");
-    status.textContent = "Logged in.";
+    status.textContent = "Signed in.";
   } catch (e) { status.textContent = `Failed: ${e.message}`; }
 };
 
@@ -296,16 +936,18 @@ document.getElementById("createProfileBtn").onclick = async () => {
     config: {
       positiveKeywords: lines(document.getElementById("newProfilePos").value),
       negativeTitleKeywords: lines(document.getElementById("newProfileNeg").value),
-      llmPrompt: `You are a strict classifier for this profile. Given title and abstract, respond with JSON only: {"relevant":true} when clearly relevant, otherwise {"relevant":false}.`,
+      llmPrompt: (document.getElementById("newProfilePrompt").value || "").trim() ||
+        `You are a strict classifier for this profile. Given title and abstract, respond with JSON only: {"relevant":true} when clearly relevant, otherwise {"relevant":false}.`,
       sources: parseSources(document.getElementById("newProfileSources").value)
     }
   };
   const status = document.getElementById("createProfileStatus");
-  status.textContent = "Creating...";
+  status.textContent = "Creating…";
   try {
     await api("/api/profiles", { method: "POST", body: JSON.stringify(payload) });
     resetCreateProfileForm();
     await reloadProfiles();
+    initArxivRescanDefaults();
     showView("candidates");
     status.textContent = "Created.";
   } catch (e) { status.textContent = `Failed: ${e.message}`; }
@@ -314,12 +956,32 @@ document.getElementById("createProfileBtn").onclick = async () => {
 document.getElementById("reloadCandidatesBtn").onclick = reloadCandidates;
 adminMetricsFilter.onchange = reloadCandidates;
 
+document.getElementById("arxivRescanBtn").onclick = async () => {
+  const el = document.getElementById("arxivRescanStatus");
+  el.textContent = "Running…";
+  try {
+    const sinceEl = document.getElementById("rescanSince");
+    const untilEl = document.getElementById("rescanUntil");
+    const payload = { innerQuery: (document.getElementById("rescanQuery").value || "").trim() };
+    if ((sinceEl.value || "").trim()) payload.since = new Date(sinceEl.value).toISOString();
+    if ((untilEl.value || "").trim()) payload.until = new Date(untilEl.value).toISOString();
+    const data = await api("/api/admin/ingest/arxiv-rescan", { method: "POST", body: JSON.stringify(payload) });
+    el.textContent = `Sent ${data.recordsSentToDedup} records (pages ${data.pagesFetched}). Global keywords in the collector still filter ingestion.`;
+    await reloadCandidates();
+  } catch (e) {
+    el.textContent = `Failed: ${e.message}`;
+  }
+};
+
 async function reloadCandidates() {
   const status = document.getElementById("candidateStatus");
+  const hintEl = document.getElementById("candidateMeta");
   const list = document.getElementById("candidateList");
   list.innerHTML = "";
-  if (!activeProfileId) { status.textContent = "Create/select a profile first."; return; }
-  status.textContent = "Loading candidates...";
+  hintEl.textContent = "";
+  if (!auth.authenticated) { status.textContent = ""; return; }
+  if (!activeProfileId) { status.textContent = "Create a profile in Profile settings."; return; }
+  status.textContent = "Loading…";
   const mode = adminMetricsFilter.value || "all";
   const q = new URLSearchParams({
     keywordOnly: String(mode === "keyword"),
@@ -328,29 +990,28 @@ async function reloadCandidates() {
   });
   try {
     const data = await api(`/api/profiles/${activeProfileId}/analysis/candidates?` + q.toString());
+    if (data.meta && data.meta.hint) hintEl.textContent = String(data.meta.hint);
     for (const p of (data.items || [])) {
       const el = document.createElement("div");
       el.className = "paper";
       const url = p.url || "#";
       el.innerHTML = `
         <h3><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(p.title || ("Paper #" + p.paperId))}</a></h3>
-        <div class="muted">${esc(String(p.year || "Unknown"))} · ${esc(p.firstAuthor || "Unknown")}</div>
+        <div class="muted">${esc(String(p.year || "?"))} · ${esc(p.firstAuthor || "?")}</div>
         <div class="summary">${esc((p.abstract || "").slice(0, 3000))}</div>
-        <div class="row">
-          <button data-a="pdf">Download PDF</button>
-          <button data-a="relevant">Add to Relevant</button>
+        <div class="row toolbar">
+          <button type="button" data-a="pdf">PDF</button>
+          <button type="button" data-a="relevant">Add to Relevant</button>
         </div>
         <div class="badge ${auth.user && auth.user.isAdmin ? "" : "hidden"}">
-          keywordPass=${p.keywordPass} · llmRelevant=${p.llmRelevant === null || p.llmRelevant === undefined ? "n/a" : p.llmRelevant} · shadowScore=${Number(p.shadowScore || 0).toFixed(3)} · wouldAutoDownload=${p.shadowWouldAutoDownload}
+          kw=${p.keywordPass} · llm=${p.llmRelevant === null || p.llmRelevant === undefined ? "n/a" : p.llmRelevant} · shadow=${Number(p.shadowScore || 0).toFixed(3)} · autoDL=${p.shadowWouldAutoDownload}
         </div>
       `;
-      el.querySelector("button[data-a='pdf']").onclick = () => {
-        window.open(buildPDFURL(url), "_blank");
-      };
+      el.querySelector("button[data-a='pdf']").onclick = () => window.open(buildPDFURL(url), "_blank");
       el.querySelector("button[data-a='relevant']").onclick = () => openRelevantModal(p);
       list.appendChild(el);
     }
-    status.textContent = `Loaded ${data.items ? data.items.length : 0} candidates.`;
+    status.textContent = `${data.items ? data.items.length : 0} candidates`;
   } catch (e) {
     status.textContent = `Failed: ${e.message}`;
   }
@@ -369,13 +1030,13 @@ async function reloadRelevant() {
     const el = document.createElement("div");
     el.className = "paper";
     el.innerHTML = `
-      <h3><a href="${esc(p.url || "#")}" target="_blank">${esc(p.title)}</a></h3>
+      <h3><a href="${esc(p.url || "#")}" target="_blank" rel="noopener">${esc(p.title)}</a></h3>
       <div class="summary">${esc((p.abstract || "").slice(0, 1200))}</div>
       <div class="muted">${esc(p.note || "")}</div>
       <div class="tags">${(p.tags || []).map(t => "#" + esc(t)).join(" ")}</div>
-      <div class="row">
-        <button data-a="pdf">Download PDF</button>
-        <button data-a="remove">Remove from Relevant</button>
+      <div class="row toolbar">
+        <button type="button" data-a="pdf">PDF</button>
+        <button type="button" data-a="remove">Remove</button>
       </div>
     `;
     el.querySelector("button[data-a='pdf']").onclick = () => window.open(`/api/public/papers/${p.id}/pdf`, "_blank");
@@ -393,14 +1054,18 @@ async function reloadPublicProfiles() {
   const list = document.getElementById("publicProfilesList");
   list.innerHTML = "";
   for (const p of (data.items || [])) {
-    const el = document.createElement("div");
-    el.className = "paper";
+    const el = document.createElement("article");
+    el.className = "card explore-card";
+    const href = `/api/public/u/${encodeURIComponent(p.username)}/${encodeURIComponent(p.slug)}`;
+    const desc = (p.description || "").trim();
+    const descBlock = desc ? `<p class="explore-desc">${esc(desc)}</p>` : "";
     el.innerHTML = `
-      <h3>${esc(p.name)} <span class="muted">/u/${esc(p.username)}/${esc(p.slug)}</span></h3>
-      <div class="muted">${esc(p.description || "")}</div>
-      <button data-a="open">Open</button>
+      <a class="explore-card-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">
+        <h3>${esc(p.name)}</h3>
+        <p class="explore-meta">${esc(p.username)} / ${esc(p.slug)}</p>
+        ${descBlock}
+      </a>
     `;
-    el.querySelector("button[data-a='open']").onclick = () => window.open(`/api/public/u/${encodeURIComponent(p.username)}/${encodeURIComponent(p.slug)}`, "_blank");
     list.appendChild(el);
   }
 }
@@ -421,13 +1086,13 @@ document.getElementById("confirmRelevantBtn").onclick = async () => {
   const tags = (document.getElementById("relevantTagsInput").value || "").split(",").map(v => v.trim()).filter(Boolean);
   const note = (document.getElementById("relevantNoteInput").value || "").trim();
   const status = document.getElementById("relevantModalStatus");
-  status.textContent = "Adding...";
+  status.textContent = "Saving…";
   try {
     await api(`/api/profiles/${activeProfileId}/likes`, {
       method: "POST",
       body: JSON.stringify({ paperId: pendingRelevantPaper.paperId, tags, note })
     });
-    status.textContent = "Added to Relevant.";
+    status.textContent = "Added.";
     modalBg.style.display = "none";
     await reloadRelevant();
   } catch (e) {
@@ -448,7 +1113,9 @@ function parseSources(s) {
   return out;
 }
 function lines(s) { return String(s || "").split("\n").map(v => v.trim()).filter(Boolean); }
-function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c])); }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+}
 function buildPDFURL(url) {
   const raw = String(url || "").trim();
   if (!raw) return "#";
@@ -458,13 +1125,20 @@ function buildPDFURL(url) {
 }
 
 resetCreateProfileForm();
+
 refreshAuth()
   .then(async () => {
-    if (auth.authenticated) showView("candidates");
-    else showView("auth");
+    if (auth.authenticated) {
+      await reloadProfiles().catch(() => {});
+      initArxivRescanDefaults();
+      showView("candidates");
+    } else {
+      showView("explore");
+    }
     await reloadPublicProfiles();
   })
-  .catch(() => showView("auth"));
+  .catch(() => showView("explore"));
+
 </script>
 </body>
 </html>

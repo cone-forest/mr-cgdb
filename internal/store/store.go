@@ -4,9 +4,12 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"sort"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const migrationAdvisoryLock int64 = 0x62726367646d7263 // mr-cgdb (unique session lock id)
 
 //go:embed sql/*.sql
 var migrationFS embed.FS
@@ -33,10 +36,25 @@ func New(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 }
 
 func migrate(ctx context.Context, p *pgxpool.Pool) error {
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrationAdvisoryLock); err != nil {
+		return fmt.Errorf("migrate lock: %w", err)
+	}
+	defer func() {
+		bg := context.Background()
+		_, _ = conn.Exec(bg, `SELECT pg_advisory_unlock($1)`, migrationAdvisoryLock)
+	}()
+
 	entries, err := migrationFS.ReadDir("sql")
 	if err != nil {
 		return err
 	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -45,7 +63,7 @@ func migrate(ctx context.Context, p *pgxpool.Pool) error {
 		if err != nil {
 			return err
 		}
-		if _, err := p.Exec(ctx, string(b)); err != nil {
+		if _, err := conn.Exec(ctx, string(b)); err != nil {
 			return fmt.Errorf("migrate %s: %w", e.Name(), err)
 		}
 	}

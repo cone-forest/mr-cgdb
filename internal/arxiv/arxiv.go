@@ -37,25 +37,8 @@ type atomFeed struct {
 	} `xml:"entry"`
 }
 
-// SearchPage calls export.arxiv.org with the full query string (without base URL) and decodes the result.
-func SearchPage(ctx context.Context, q string) ([]Entry, error) {
-	u := "http://export.arxiv.org/api/query?" + q
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("arxiv http %s", resp.Status)
-	}
-	b, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+// decodeAtom parses an arXiv Atom API response payload.
+func decodeAtom(b []byte) ([]Entry, error) {
 	var f atomFeed
 	if err := xml.Unmarshal(b, &f); err != nil {
 		return nil, err
@@ -84,6 +67,29 @@ func SearchPage(ctx context.Context, q string) ([]Entry, error) {
 		})
 	}
 	return out, nil
+}
+
+// SearchPage calls export.arxiv.org with the full query string (without base URL) and decodes the result.
+func SearchPage(ctx context.Context, q string) ([]Entry, error) {
+	u := "http://export.arxiv.org/api/query?" + q
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "mr-cgdb/1.0 (local paper ingest; polite batching)")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("arxiv http %s", resp.Status)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return decodeAtom(body)
 }
 
 func extractArxivID(arxivIDURL string) string {

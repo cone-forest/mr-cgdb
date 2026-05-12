@@ -51,6 +51,7 @@ Open UI at <http://localhost:8080>.
 - `GET /api/public/papers/{id}/pdf`
 - `GET /api/jobs/failures`
 - `POST /api/jobs/{id}/retry`
+- `POST /api/admin/ingest/arxiv-rescan` (admin, requires `DEDUP_ADDR`; body: optional `since` / `until` RFC3339, `innerQuery` arXiv search fragment, optional `maxPages`)
 
 ## Notes
 

@@ -41,6 +41,14 @@ type Profile struct {
 	LastAccessedAt time.Time `json:"lastAccessedAt"`
 }
 
+// PublicExploreProfile is returned from GET /api/public/profiles — only what the Explore directory should expose.
+type PublicExploreProfile struct {
+	Username    string `json:"username"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 type ProfileConfig struct {
 	ProfileID             int64           `json:"profileId"`
 	PositiveKeywords      []string        `json:"positiveKeywords"`
@@ -413,4 +421,50 @@ func normalizeTagList(in []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+const publicExploreDescriptionMaxRunes = 220
+
+// NewPublicExploreSummary builds an Explore-card payload — no ingest settings, clipped description.
+func NewPublicExploreSummary(p Profile) PublicExploreProfile {
+	desc := ClampRunes(filterTechnicalExploreDescription(p.Description), publicExploreDescriptionMaxRunes)
+	return PublicExploreProfile{
+		Username:    strings.TrimSpace(p.Username),
+		Slug:        strings.TrimSpace(p.Slug),
+		Name:        strings.TrimSpace(p.Name),
+		Description: desc,
+	}
+}
+
+func filterTechnicalExploreDescription(raw string) string {
+	var parts []string
+	for _, line := range strings.Split(raw, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		low := strings.ToLower(t)
+		if strings.HasPrefix(strings.TrimSpace(low), "arxiv_query") {
+			continue
+		}
+		if strings.Contains(low, "search_query=") {
+			continue
+		}
+		parts = append(parts, t)
+	}
+	s := strings.Join(parts, " ")
+	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+}
+
+// ClampRunes shortens UTF-8 text by rune count (used for teasers).
+func ClampRunes(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || s == "" {
+		return s
+	}
+	rs := []rune(s)
+	if len(rs) <= max {
+		return s
+	}
+	return strings.TrimSpace(string(rs[:max])) + "…"
 }

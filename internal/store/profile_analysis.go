@@ -102,25 +102,57 @@ func ListProfileAnalysisCandidates(ctx context.Context, p *pgxpool.Pool, profile
 		limit = 100
 	}
 	rows, err := p.Query(ctx, `
-		SELECT a.profile_id, a.paper_id, a.keyword_pass, a.keyword_hits, a.llm_relevant, a.llm_raw,
-		       a.shadow_would_auto_download, a.shadow_score, a.updated_at,
-		       pa.title,
-		       COALESCE(pa.url, CASE WHEN pa.arxiv_id IS NOT NULL THEN 'https://arxiv.org/abs/' || pa.arxiv_id ELSE '' END) AS paper_url,
-		       pa.year, pa.first_author, pa.abstract
-		FROM profile_paper_analysis a
-		JOIN papers pa ON pa.id = a.paper_id
-		WHERE a.profile_id = $1
-		  AND ($2::bool = false OR a.keyword_pass = true)
-		  AND ($3::bool = false OR a.llm_relevant = true)
-		  AND ($4::bool = false OR a.shadow_would_auto_download = true)
-		ORDER BY a.updated_at DESC
+		SELECT
+			COALESCE(a.profile_id, $1),
+			pa.id,
+			COALESCE(a.keyword_pass, false),
+			COALESCE(a.keyword_hits, ARRAY[]::TEXT[]),
+			a.llm_relevant,
+			COALESCE(a.llm_raw, ''),
+			COALESCE(a.shadow_would_auto_download, false),
+			COALESCE(a.shadow_score, 0)::double precision,
+			COALESCE(a.updated_at, pa.created_at),
+			pa.title,
+			COALESCE(pa.url, CASE WHEN pa.arxiv_id IS NOT NULL THEN 'https://arxiv.org/abs/' || pa.arxiv_id ELSE '' END) AS paper_url,
+			pa.year, pa.first_author, pa.abstract
+		FROM papers pa
+		LEFT JOIN profile_paper_analysis a ON a.profile_id = $1 AND a.paper_id = pa.id
+		WHERE (
+		  (
+			pa.source = 'arxiv'
+			AND EXISTS (
+				SELECT 1 FROM profile_sources ps
+				WHERE ps.profile_id = $1
+				  AND ps.enabled = true
+				  AND ps.source_type = 'arxiv_query'
+			)
+		  )
+		  OR EXISTS (
+			SELECT 1
+			FROM rss_feeds rf
+			INNER JOIN profile_sources ps
+				ON ps.profile_id = $1
+			   AND ps.enabled = true
+			   AND ps.source_type = 'rss'
+			   AND lower(ps.source_value) = lower(rf.url)
+			WHERE pa.source = 'rss:feed-' || rf.id::text
+		  )
+		  OR (
+			NOT EXISTS (SELECT 1 FROM profile_sources ps WHERE ps.profile_id = $1)
+			AND (pa.source = 'arxiv' OR pa.source LIKE 'rss:feed-%')
+		  )
+		)
+		  AND ($2::bool = false OR COALESCE(a.keyword_pass, false) = true)
+		  AND ($3::bool = false OR COALESCE(a.llm_relevant, false) = true)
+		  AND ($4::bool = false OR COALESCE(a.shadow_would_auto_download, false) = true)
+		ORDER BY COALESCE(a.updated_at, pa.created_at) DESC
 		LIMIT $5
 	`, profileID, keywordOnly, llmRelevantOnly, wouldAutoOnly, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ProfileAnalysisCandidate
+	out := make([]ProfileAnalysisCandidate, 0)
 	for rows.Next() {
 		var c ProfileAnalysisCandidate
 		if err := rows.Scan(
