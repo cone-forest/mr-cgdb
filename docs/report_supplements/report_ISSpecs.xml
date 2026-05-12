@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE ISSPECS SYSTEM "ISSpecs.dtd">
+<ISSPECS>
+  <DESCRIPTION>
+    <TITLE>mr-cgdb</TITLE>
+    <SUBJ>Локальная система профиле-ориентированной фильтрации и кураторства научных статей</SUBJ>
+  </DESCRIPTION>
+
+  <DATA>
+    <ENTITY ent_id="users">
+      <PROPERTY>id, username (unique), password_hash, is_admin, created_at</PROPERTY>
+    </ENTITY>
+    <ENTITY ent_id="profiles">
+      <PROPERTY>id, user_id (FK users), slug, name, description, visibility, timestamps</PROPERTY>
+    </ENTITY>
+    <ENTITY ent_id="papers">
+      <PROPERTY>id, arxiv_id/doi/weak_key, title, abstract, url, pdf_url, embedding, created_at</PROPERTY>
+    </ENTITY>
+    <ENTITY ent_id="likes">
+      <PROPERTY>profile_paper_likes(profile_id, paper_id, note, tags, liked_at)</PROPERTY>
+    </ENTITY>
+    <ENTITY ent_id="analysis">
+      <PROPERTY>profile_paper_analysis(profile_id, paper_id, keyword_pass, keyword_hits, shadow_score, llm_relevant)</PROPERTY>
+    </ENTITY>
+    <ENTITY ent_id="jobs">
+      <PROPERTY>id, kind, status, payload, error_reason, timestamps</PROPERTY>
+    </ENTITY>
+
+    <RELATIONSHIP ent_ids="users profiles">
+      <PROPERTY>Один пользователь владеет многими профилями</PROPERTY>
+    </RELATIONSHIP>
+    <RELATIONSHIP ent_ids="profiles likes papers">
+      <PROPERTY>Профиль содержит ручные отметки релевантности статей</PROPERTY>
+    </RELATIONSHIP>
+    <RELATIONSHIP ent_ids="profiles analysis papers">
+      <PROPERTY>Профиль хранит вычисленные метрики анализа по каждой статье</PROPERTY>
+    </RELATIONSHIP>
+    <RELATIONSHIP ent_ids="papers jobs">
+      <PROPERTY>Очередь фоновых задач обрабатывает PDF и верификацию статей</PROPERTY>
+    </RELATIONSHIP>
+
+    <CONSTRAINT>visibility принимает только значения public/private</CONSTRAINT>
+    <CONSTRAINT>профиль уникален по (user_id, slug)</CONSTRAINT>
+    <CONSTRAINT>profile_paper_likes уникален по (profile_id, paper_id)</CONSTRAINT>
+    <CONSTRAINT>profile_paper_analysis уникален по (profile_id, paper_id)</CONSTRAINT>
+    <CONSTRAINT>job.status принимает pending/running/failed/done</CONSTRAINT>
+  </DATA>
+
+  <ROLES>
+    <ROLE>
+      <TITLE>Администратор</TITLE>
+      <RESPONSIBILITY>Запуск глобального arXiv рескана</RESPONSIBILITY>
+      <RESPONSIBILITY>Контроль и ретрай неуспешных задач</RESPONSIBILITY>
+      <TOTALUSERS>1-2</TOTALUSERS>
+    </ROLE>
+    <ROLE>
+      <TITLE>Исследователь</TITLE>
+      <RESPONSIBILITY>Создание и настройка профилей</RESPONSIBILITY>
+      <RESPONSIBILITY>Ручное добавление и маркировка релевантных статей</RESPONSIBILITY>
+      <RESPONSIBILITY>Запуск LLM Verify по конкретной статье</RESPONSIBILITY>
+      <TOTALUSERS>10+</TOTALUSERS>
+    </ROLE>
+    <ROLE>
+      <TITLE>Публичный читатель</TITLE>
+      <RESPONSIBILITY>Просмотр public-профилей и опубликованных списков</RESPONSIBILITY>
+      <RESPONSIBILITY>Открытие публично доступных PDF</RESPONSIBILITY>
+      <TOTALUSERS>неограниченно</TOTALUSERS>
+    </ROLE>
+  </ROLES>
+
+  <TECHSPEC>
+    <TYPE>Web UI + REST API + асинхронные worker-процессы</TYPE>
+    <DEVTOOLS>
+      <DEV>Go 1.22</DEV>
+      <DEV>Docker Compose</DEV>
+      <DEV>Ollama</DEV>
+      <DEV>Chi Router</DEV>
+      <DEV>pgx</DEV>
+    </DEVTOOLS>
+    <DBMS>
+      <TITLE>PostgreSQL</TITLE>
+      <VERSION>16</VERSION>
+      <REASONING>Транзакционность, надежные FK/индексы, удобство работы с очередями и JSON payload</REASONING>
+    </DBMS>
+    <TESTING>
+      <TEST>Интеграционные проверки ingest конвейера watcher->dedup->keyword->pipeline->worker</TEST>
+      <TEST>Проверка маршрутизации по profile_sources и profile keywords</TEST>
+      <TEST>Проверка job lifecycle для pdf_download/profile_analyze/profile_llm_verify</TEST>
+      <TEST>Ручные E2E сценарии UI: профиль, relevant, rescan, verify, public view</TEST>
+    </TESTING>
+  </TECHSPEC>
+</ISSPECS>
