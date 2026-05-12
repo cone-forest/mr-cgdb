@@ -21,7 +21,8 @@ func arxivTimeToken(t time.Time) string {
 }
 
 // SearchPagedInRange lists papers with submittedDate in [since, until] UTC (inclusive by API semantics),
-// paginated via start/maxResults. Caller should respect arXiv etiquette (~3s between pages).
+// paginated via start/max_results (max_results capped at 2000 per arXiv guidance).
+// Rate limiting between HTTP calls is enforced inside SearchPage.
 func SearchPagedInRange(ctx context.Context, innerSearch string, since, until time.Time, start, maxResults int) ([]Entry, error) {
 	since, until = since.UTC(), until.UTC()
 	if until.Before(since) {
@@ -34,6 +35,12 @@ func SearchPagedInRange(ctx context.Context, innerSearch string, since, until ti
 	v.Set("sortBy", "submittedDate")
 	v.Set("sortOrder", "ascending")
 	v.Set("start", strconv.Itoa(start))
+	if maxResults <= 0 {
+		maxResults = 200
+	}
+	if maxResults > 2000 {
+		maxResults = 2000
+	}
 	v.Set("max_results", strconv.Itoa(maxResults))
 	return SearchPage(ctx, v.Encode())
 }

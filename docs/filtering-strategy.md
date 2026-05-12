@@ -15,6 +15,9 @@ This means publication/discovery is curation-first, not model-first.
 ## Effective hierarchy now
 
 1. **Global ingest gates** (watchers -> dedup -> keyword -> pipeline) still produce corpus rows in `papers`.
+   - The **keyword** step always applies the negative-title blocklist (`NEGATIVE_TITLE_KEYWORDS`).
+   - **Profile-scoped relevance** (positive keywords, negative title keywords, LLM) lives in **`profile_configs`** and is applied later by **`profile_analyze`** jobs — that is the primary keyword story.
+   - **Optional legacy gate:** set **`KEYWORD_GLOBAL_GATE=strict`** on the keyword service to also require a substring match from **`KEYWORDS_FILE`** before insert (shrinks shared corpus early). Default is **no global phrase file gate** so ingest breadth follows your ArXiv/RSS queries and profiles filter downstream.
 2. **Profile ownership gate** decides who can curate a profile.
 3. **Profile visibility gate** (`public/private`) decides who can read the profile.
 4. **Manual like gate** (`profile_paper_likes`) determines what appears in that profile feed.

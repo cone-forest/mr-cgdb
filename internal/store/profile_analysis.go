@@ -102,29 +102,51 @@ func ListProfileAnalysisCandidates(ctx context.Context, p *pgxpool.Pool, profile
 		limit = 100
 	}
 	rows, err := p.Query(ctx, `
+		WITH paper_kw AS (
+			SELECT pa.*,
+				lower(trim(coalesce(pa.title, '')) || E'\n' || trim(coalesce(pa.abstract, ''))) AS haystack
+			FROM papers pa
+		)
 		SELECT
 			COALESCE(a.profile_id, $1),
-			pa.id,
-			COALESCE(a.keyword_pass, false),
+			p.id,
+			(COALESCE(a.keyword_pass, false) OR (
+				cardinality(coalesce(pc.positive_keywords, '{}')) > 0
+				AND EXISTS (
+					SELECT 1 FROM unnest(coalesce(pc.positive_keywords, '{}')) AS kw
+					WHERE trim(kw) <> ''
+					  AND strpos(p.haystack, lower(trim(kw))) > 0
+				)
+			)),
 			COALESCE(a.keyword_hits, ARRAY[]::TEXT[]),
 			a.llm_relevant,
 			COALESCE(a.llm_raw, ''),
 			COALESCE(a.shadow_would_auto_download, false),
 			COALESCE(a.shadow_score, 0)::double precision,
-			COALESCE(a.updated_at, pa.created_at),
-			pa.title,
-			COALESCE(pa.url, CASE WHEN pa.arxiv_id IS NOT NULL THEN 'https://arxiv.org/abs/' || pa.arxiv_id ELSE '' END) AS paper_url,
-			pa.year, pa.first_author, pa.abstract
-		FROM papers pa
-		LEFT JOIN profile_paper_analysis a ON a.profile_id = $1 AND a.paper_id = pa.id
+			COALESCE(a.updated_at, p.created_at),
+			p.title,
+			COALESCE(p.url, CASE WHEN p.arxiv_id IS NOT NULL THEN 'https://arxiv.org/abs/' || p.arxiv_id ELSE '' END) AS paper_url,
+			p.year, p.first_author, p.abstract
+		FROM paper_kw p
+		LEFT JOIN profile_paper_analysis a ON a.profile_id = $1 AND a.paper_id = p.id
+		LEFT JOIN profile_configs pc ON pc.profile_id = $1
 		WHERE (
 		  (
-			pa.source = 'arxiv'
+			p.source = 'arxiv'
 			AND EXISTS (
 				SELECT 1 FROM profile_sources ps
 				WHERE ps.profile_id = $1
 				  AND ps.enabled = true
-				  AND ps.source_type = 'arxiv_query'
+				  AND (
+					ps.source_type = 'arxiv_query'
+					OR (
+						ps.source_type = 'rss'
+						AND (
+							trim(trailing '/' from regexp_replace(lower(trim(ps.source_value)), '^(https?:)?//', '')) LIKE 'rss.arxiv.org/rss/%'
+							OR trim(trailing '/' from regexp_replace(lower(trim(ps.source_value)), '^(https?:)?//', '')) LIKE 'export.arxiv.org/rss/%'
+						)
+					)
+				  )
 			)
 		  )
 		  OR EXISTS (
@@ -134,18 +156,37 @@ func ListProfileAnalysisCandidates(ctx context.Context, p *pgxpool.Pool, profile
 				ON ps.profile_id = $1
 			   AND ps.enabled = true
 			   AND ps.source_type = 'rss'
-			   AND lower(ps.source_value) = lower(rf.url)
-			WHERE pa.source = 'rss:feed-' || rf.id::text
+			   AND trim(trailing '/' from regexp_replace(lower(trim(ps.source_value)), '^(https?:)?//', '')) =
+			       trim(trailing '/' from regexp_replace(lower(trim(rf.url)), '^(https?:)?//', ''))
+			WHERE p.source = 'rss:feed-' || rf.id::text
 		  )
 		  OR (
 			NOT EXISTS (SELECT 1 FROM profile_sources ps WHERE ps.profile_id = $1)
-			AND (pa.source = 'arxiv' OR pa.source LIKE 'rss:feed-%')
+			AND (p.source = 'arxiv' OR p.source LIKE 'rss:feed-%')
 		  )
 		)
-		  AND ($2::bool = false OR COALESCE(a.keyword_pass, false) = true)
+		  AND (
+			COALESCE(a.keyword_pass, false)
+			OR (
+				cardinality(coalesce(pc.positive_keywords, '{}')) > 0
+				AND EXISTS (
+					SELECT 1 FROM unnest(coalesce(pc.positive_keywords, '{}')) AS kw
+					WHERE trim(kw) <> ''
+					  AND strpos(p.haystack, lower(trim(kw))) > 0
+				)
+			)
+		  )
+		  AND ($2::bool = false OR COALESCE(a.keyword_pass, false) OR (
+				cardinality(coalesce(pc.positive_keywords, '{}')) > 0
+				AND EXISTS (
+					SELECT 1 FROM unnest(coalesce(pc.positive_keywords, '{}')) AS kw
+					WHERE trim(kw) <> ''
+					  AND strpos(p.haystack, lower(trim(kw))) > 0
+				)
+			))
 		  AND ($3::bool = false OR COALESCE(a.llm_relevant, false) = true)
 		  AND ($4::bool = false OR COALESCE(a.shadow_would_auto_download, false) = true)
-		ORDER BY COALESCE(a.updated_at, pa.created_at) DESC
+		ORDER BY COALESCE(a.updated_at, p.created_at) DESC
 		LIMIT $5
 	`, profileID, keywordOnly, llmRelevantOnly, wouldAutoOnly, limit)
 	if err != nil {
@@ -165,4 +206,15 @@ func ListProfileAnalysisCandidates(ctx context.Context, p *pgxpool.Pool, profile
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+func UpdateProfilePaperAnalysisLLM(ctx context.Context, p *pgxpool.Pool, profileID, paperID int64, llmRelevant *bool, llmRaw string) error {
+	_, err := p.Exec(ctx, `
+		UPDATE profile_paper_analysis
+		SET llm_relevant = $3,
+		    llm_raw = $4,
+		    updated_at = now()
+		WHERE profile_id = $1 AND paper_id = $2
+	`, profileID, paperID, llmRelevant, llmRaw)
+	return err
 }

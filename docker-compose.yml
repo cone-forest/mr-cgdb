@@ -55,6 +55,8 @@ services:
       LISTEN: :9002
       PIPELINE_ADDR: pipeline:9003
       KEYWORDS_FILE: /config/keywords.txt
+      # Optional legacy corpus shrink: set KEYWORD_GLOBAL_GATE=strict to require keywords.txt substring match before insert.
+      # Default: profile-owned keywords only (see Profile settings).
       NEGATIVE_TITLE_KEYWORDS: gaussian,splatt
     volumes:
       - ./config:/config:ro
@@ -104,6 +106,7 @@ services:
     environment:
       DATABASE_URL: postgres://papers:papers@postgres:5432/papers?sslmode=disable
       DEDUP_ADDR: dedup:9001
+      ARXIV_API_MIN_INTERVAL: 3.2s
       ARXIV_QUERY: search_query=cat:cs.GR&sortBy=submittedDate&sortOrder=descending&start=0&max_results=200
       ARXIV_POLL: 2m
 
@@ -139,6 +142,7 @@ services:
       DATABASE_URL: postgres://papers:papers@postgres:5432/papers?sslmode=disable
       LISTEN: :8080
       DEDUP_ADDR: dedup:9001
+      ARXIV_API_MIN_INTERVAL: 3.2s
       PDF_STORAGE_DIR: /data/pdfs
       PDF_MAX_SERVE_BYTES: "100000000"
       PDF_RATE_LIMIT_PER_MIN: "60"

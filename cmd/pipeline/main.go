@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +32,7 @@ func main() {
 	thr, _ := strconv.ParseFloat(getenv("SHADOW_THRESHOLD", "0.0"), 64)
 	negBias, _ := strconv.ParseFloat(getenv("SHADOW_NEGATIVE_BIAS", "0.05"), 64)
 	maxA, _ := strconv.Atoi(getenv("LLM_MAX_ATTEMPTS", "3"))
+	enableLLM := strings.EqualFold(strings.TrimSpace(getenv("PIPELINE_ENABLE_LLM", "false")), "true")
 	if maxA < 1 {
 		maxA = 3
 	}
@@ -50,8 +52,10 @@ func main() {
 	if err := oc.Pull(modelCtx, embed); err != nil {
 		log.Printf("warning: embed model pull failed (%s): %v", embed, err)
 	}
-	if err := oc.Pull(modelCtx, chat); err != nil {
-		log.Printf("warning: chat model pull failed (%s): %v", chat, err)
+	if enableLLM {
+		if err := oc.Pull(modelCtx, chat); err != nil {
+			log.Printf("warning: chat model pull failed (%s): %v", chat, err)
+		}
 	}
 	proc := &pipeline.Processor{Pool: pool, OC: oc, Opt: pipeline.Options{
 		ShadowThreshold:    thr,
@@ -59,11 +63,12 @@ func main() {
 		PositiveSeedPath:   posSeedPath,
 		NegativeSeedPath:   negSeedPath,
 		LLMMaxAttempts:     maxA,
+		EnableLLM:          enableLLM,
 	}}
 	if err := proc.LoadSeeds(ctx); err != nil {
 		log.Printf("warning: seed load failed, continuing without seed embeddings: %v", err)
 	}
-	log.Printf("seed embeddings loaded: positive=%d negative=%d", len(proc.PositiveSeeds), len(proc.NegativeSeeds))
+	log.Printf("seed embeddings loaded: positive=%d negative=%d pipeline_enable_llm=%v", len(proc.PositiveSeeds), len(proc.NegativeSeeds), enableLLM)
 
 	ln, err := net.Listen("tcp", listen)
 	if err != nil {

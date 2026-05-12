@@ -1,0 +1,2 @@
+ALTER TABLE papers
+ADD COLUMN IF NOT EXISTS pdf_url TEXT;

@@ -11,8 +11,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +27,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"mr-cgdb/internal/arxiv"
 	"mr-cgdb/internal/keywords"
+	"mr-cgdb/internal/model"
 	"mr-cgdb/internal/netx"
 	"mr-cgdb/internal/ollama"
 	"mr-cgdb/internal/store"
@@ -45,6 +48,106 @@ type app struct {
 	rateWindow      time.Time
 	rateCounter     map[string]int
 	rateLimitPerMin int
+}
+
+func chooseArxivRescanPageSize() int {
+	// Keep admin rescan aligned with watcher defaults to avoid arXiv-side "Rate exceeded"
+	// responses on very large pages from shared/NAT egress IPs.
+	v := strings.TrimSpace(os.Getenv("ARXIV_RESCAN_PAGE_SIZE"))
+	if v == "" {
+		return 200
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 200
+	}
+	if n < 25 {
+		return 25
+	}
+	if n > 500 {
+		return 500
+	}
+	return n
+}
+
+func normalizedArxivRSSCategory(sourceValue string) string {
+	s := strings.TrimSpace(strings.ToLower(sourceValue))
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.TrimPrefix(s, "//")
+	s = strings.TrimSuffix(s, "/")
+	switch {
+	case strings.HasPrefix(s, "rss.arxiv.org/rss/"):
+		return strings.TrimSpace(strings.TrimPrefix(s, "rss.arxiv.org/rss/"))
+	case strings.HasPrefix(s, "export.arxiv.org/rss/"):
+		return strings.TrimSpace(strings.TrimPrefix(s, "export.arxiv.org/rss/"))
+	default:
+		return ""
+	}
+}
+
+func arxivInnerQueryFromSourceValue(raw string) string {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return ""
+	}
+	if strings.Contains(v, "search_query=") {
+		if parsed, err := url.Parse(v); err == nil {
+			if sq := strings.TrimSpace(parsed.Query().Get("search_query")); sq != "" {
+				return sq
+			}
+		}
+		if qv, err := url.ParseQuery(v); err == nil {
+			if sq := strings.TrimSpace(qv.Get("search_query")); sq != "" {
+				return sq
+			}
+		}
+	}
+	return v
+}
+
+func deriveArxivRescanInnerQuery(cfg *store.ProfileConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	var out []string
+	seen := map[string]struct{}{}
+	for _, s := range cfg.Sources {
+		if !s.Enabled {
+			continue
+		}
+		st := strings.ToLower(strings.TrimSpace(s.SourceType))
+		switch st {
+		case "arxiv_query":
+			q := strings.TrimSpace(arxivInnerQueryFromSourceValue(s.SourceValue))
+			if q == "" {
+				continue
+			}
+			if _, ok := seen[q]; ok {
+				continue
+			}
+			seen[q] = struct{}{}
+			out = append(out, q)
+		case "rss":
+			cat := normalizedArxivRSSCategory(s.SourceValue)
+			if cat == "" {
+				continue
+			}
+			q := "cat:" + cat
+			if _, ok := seen[q]; ok {
+				continue
+			}
+			seen[q] = struct{}{}
+			out = append(out, q)
+		}
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	if len(out) == 1 {
+		return out[0]
+	}
+	return "(" + strings.Join(out, ") OR (") + ")"
 }
 
 type authContext struct {
@@ -108,10 +211,12 @@ func main() {
 	r.Delete("/api/profiles/{id}", a.withAuth(true, a.handleDeleteProfile))
 	r.Post("/api/profiles/{id}/access", a.withAuth(true, a.handleTouchProfileAccess))
 	r.Post("/api/profiles/{id}/analysis/backfill", a.withAuth(true, a.handleBackfillProfileAnalysis))
+	r.Post("/api/profiles/{id}/analysis/verify", a.withAuth(true, a.handleVerifyPaperWithLLM))
 	r.Get("/api/profiles/{id}/likes", a.withAuthOptional(a.handleProfileLikes))
 	r.Get("/api/profiles/{id}/analysis", a.withAuthOptional(a.handleProfileAnalysis))
 	r.Get("/api/profiles/{id}/analysis/candidates", a.withAuthOptional(a.handleProfileAnalysisCandidates))
 	r.Post("/api/profiles/{id}/likes", a.withAuth(true, a.handleLikePaper))
+	r.Post("/api/profiles/{id}/likes/manual", a.withAuth(true, a.handleAddManualLikePaper))
 	r.Post("/api/profiles/{id}/analyze", a.withAuth(true, a.handleAnalyzePaper))
 	r.Patch("/api/profiles/{id}/likes/{paperId}", a.withAuth(true, a.handleLikePaper))
 	r.Delete("/api/profiles/{id}/likes/{paperId}", a.withAuth(true, a.handleUnlikePaper))
@@ -416,6 +521,111 @@ func (a *app) handleUnlikePaper(w http.ResponseWriter, r *http.Request, auth *au
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (a *app) handleAddManualLikePaper(w http.ResponseWriter, r *http.Request, auth *authContext) {
+	profileID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || profileID <= 0 {
+		writeErr(w, http.StatusBadRequest, errBadRequest("invalid profile id"))
+		return
+	}
+	prof, err := store.GetProfileByID(r.Context(), a.db, profileID)
+	if err != nil || prof.UserID != auth.User.ID {
+		writeErr(w, http.StatusForbidden, errBadRequest("forbidden"))
+		return
+	}
+	var req struct {
+		URL         string   `json:"url"`
+		PDFURL      string   `json:"pdfUrl"`
+		ArxivID     string   `json:"arxivId"`
+		Title       string   `json:"title"`
+		Abstract    string   `json:"abstract"`
+		Year        *int     `json:"year"`
+		FirstAuthor string   `json:"firstAuthor"`
+		Note        string   `json:"note"`
+		Tags        []string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	title := strings.TrimSpace(req.Title)
+	abstract := strings.TrimSpace(req.Abstract)
+	if title == "" || abstract == "" {
+		writeErr(w, http.StatusBadRequest, errBadRequest("title and abstract are required"))
+		return
+	}
+	rawURL := strings.TrimSpace(req.URL)
+	pdfURL := strings.TrimSpace(req.PDFURL)
+	arxivID := strings.TrimSpace(req.ArxivID)
+	if arxivID == "" && rawURL != "" {
+		arxivID = extractArxivIDFromURL(rawURL)
+	}
+	var arxivIDPtr *string
+	if arxivID != "" {
+		arxivIDPtr = &arxivID
+	}
+	paperID := int64(0)
+	if arxivIDPtr != nil {
+		existing, ferr := store.FindIDByIdentity(r.Context(), a.db, arxivIDPtr, nil, nil)
+		if ferr != nil {
+			writeErr(w, http.StatusInternalServerError, ferr)
+			return
+		}
+		paperID = existing
+	}
+	created := false
+	if paperID == 0 {
+		ing := &model.IngestItem{
+			Source:   "manual",
+			URL:      rawURL,
+			ArxivID:  arxivIDPtr,
+			Title:    title,
+			Year:     req.Year,
+			Abstract: abstract,
+		}
+		if fa := strings.TrimSpace(req.FirstAuthor); fa != "" {
+			ing.Authors = []string{fa}
+		}
+		id, insErr := store.InsertAfterKeyword(r.Context(), a.db, ing, nil)
+		if insErr != nil {
+			// Handle races on unique arxiv_id insert.
+			if arxivIDPtr != nil {
+				existing, ferr := store.FindIDByIdentity(r.Context(), a.db, arxivIDPtr, nil, nil)
+				if ferr == nil && existing > 0 {
+					paperID = existing
+				} else {
+					writeErr(w, http.StatusInternalServerError, insErr)
+					return
+				}
+			} else {
+				writeErr(w, http.StatusInternalServerError, insErr)
+				return
+			}
+		} else {
+			paperID = id
+			created = true
+		}
+	}
+	if paperID <= 0 {
+		writeErr(w, http.StatusInternalServerError, errBadRequest("could not resolve manual paper id"))
+		return
+	}
+	if pdfURL == "" && rawURL != "" && strings.HasSuffix(strings.ToLower(rawURL), ".pdf") {
+		pdfURL = rawURL
+	}
+	if pdfURL != "" {
+		_ = store.UpdatePaperPDFURL(r.Context(), a.db, paperID, pdfURL)
+	}
+	if err := store.UpsertProfileLike(r.Context(), a.db, profileID, auth.User.ID, paperID, req.Note, req.Tags); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"paperId": paperID,
+		"created": created,
+	})
+}
+
 func (a *app) handleProfileLikes(w http.ResponseWriter, r *http.Request, auth *authContext) {
 	profileID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || profileID <= 0 {
@@ -522,6 +732,45 @@ func (a *app) handleAnalyzePaper(w http.ResponseWriter, r *http.Request, auth *a
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "analysis": res})
 }
 
+func (a *app) handleVerifyPaperWithLLM(w http.ResponseWriter, r *http.Request, auth *authContext) {
+	profileID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || profileID <= 0 {
+		writeErr(w, http.StatusBadRequest, errBadRequest("invalid profile id"))
+		return
+	}
+	prof, err := store.GetProfileByID(r.Context(), a.db, profileID)
+	if err != nil || prof.UserID != auth.User.ID {
+		writeErr(w, http.StatusForbidden, errBadRequest("profile not found or forbidden"))
+		return
+	}
+	var req struct {
+		PaperID int64 `json:"paperId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.PaperID <= 0 {
+		writeErr(w, http.StatusBadRequest, errBadRequest("paperId required"))
+		return
+	}
+	if _, err := store.GetPaperRow(r.Context(), a.db, req.PaperID); err != nil {
+		writeErr(w, http.StatusNotFound, errBadRequest("paper not found"))
+		return
+	}
+	queued, err := store.EnqueueProfileLLMVerifyJob(r.Context(), a.db, profileID, req.PaperID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":        true,
+		"paperId":   req.PaperID,
+		"profileId": profileID,
+		"queued":    queued,
+	})
+}
+
 func (a *app) handleProfileAnalysis(w http.ResponseWriter, r *http.Request, auth *authContext) {
 	profileID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || profileID <= 0 {
@@ -597,6 +846,7 @@ func (a *app) handleAdminArxivRescan(w http.ResponseWriter, r *http.Request, aut
 		return
 	}
 	var req struct {
+		ProfileID  int64  `json:"profileId"`
 		Since      string `json:"since"`
 		Until      string `json:"until"`
 		InnerQuery string `json:"innerQuery"`
@@ -639,7 +889,22 @@ func (a *app) handleAdminArxivRescan(w http.ResponseWriter, r *http.Request, aut
 	if maxPages > 40 {
 		maxPages = 40
 	}
-	pageSize := 200
+	ctx := r.Context()
+	pageSize := chooseArxivRescanPageSize()
+	innerQuery := strings.TrimSpace(req.InnerQuery)
+	if req.ProfileID > 0 {
+		cfg, cfgErr := store.GetProfileConfig(ctx, a.db, req.ProfileID)
+		if cfgErr != nil {
+			writeErr(w, http.StatusBadRequest, cfgErr)
+			return
+		}
+		if q := deriveArxivRescanInnerQuery(cfg); q != "" {
+			innerQuery = q
+		}
+	}
+	if innerQuery == "" {
+		innerQuery = "cat:cs.GR"
+	}
 
 	conn, err := netx.DialTCP(dedup)
 	if err != nil {
@@ -648,13 +913,26 @@ func (a *app) handleAdminArxivRescan(w http.ResponseWriter, r *http.Request, aut
 	}
 	defer conn.Close()
 
-	ctx := r.Context()
 	sent := 0
 	pagesUsed := 0
 loop:
 	for page := 0; page < maxPages; page++ {
-		entries, err := arxiv.SearchPagedInRange(ctx, req.InnerQuery, since, until, page*pageSize, pageSize)
+		var entries []arxiv.Entry
+		err = store.WithArxivRequestLock(ctx, a.db, func(lockCtx context.Context) error {
+			var e error
+			entries, e = arxiv.SearchPagedInRange(lockCtx, innerQuery, since, until, page*pageSize, pageSize)
+			return e
+		})
 		if err != nil {
+			// A very large page can trigger "Rate exceeded" depending on source IP pressure.
+			// Retry this same page once with smaller chunks before failing the full rescan.
+			if strings.Contains(strings.ToLower(err.Error()), "429") && pageSize > 100 {
+				old := pageSize
+				pageSize = 100
+				log.Printf("mr-cgdb api arxiv_rescan shrinking page_size from %d to %d after 429; retrying page=%d", old, pageSize, page)
+				page--
+				continue
+			}
 			writeErr(w, http.StatusBadGateway, err)
 			return
 		}
@@ -683,16 +961,19 @@ loop:
 		select {
 		case <-ctx.Done():
 			break loop
-		case <-time.After(3 * time.Second):
+		default:
 		}
 	}
+	log.Printf("mr-cgdb api POST /api/admin/ingest/arxiv-rescan admin_user_id=%d dedup_addr=%s inner_query=%q since=%s until=%s records_sent_to_dedup=%d pages_fetched=%d page_size=%d",
+		auth.User.ID, dedup, innerQuery, since.UTC().Format(time.RFC3339), until.UTC().Format(time.RFC3339), sent, pagesUsed, pageSize)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                 true,
 		"recordsSentToDedup": sent,
 		"since":              since,
 		"until":              until,
 		"pagesFetched":       pagesUsed,
-		"innerQuery":         strings.TrimSpace(req.InnerQuery),
+		"innerQuery":         innerQuery,
+		"pageSize":           pageSize,
 	})
 }
 
@@ -712,6 +993,7 @@ func (a *app) handleBackfillProfileAnalysis(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	log.Printf("mr-cgdb api POST /api/profiles/%d/analysis/backfill user_id=%d queued_jobs=%d", profileID, auth.User.ID, n)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "queued": n})
 }
 
@@ -971,6 +1253,23 @@ type badRequest string
 
 func (e badRequest) Error() string { return string(e) }
 func errBadRequest(s string) error { return badRequest(s) }
+
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(*s)
+}
+
+var arxivIDPattern = regexp.MustCompile(`(?i)arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5})(?:v\d+)?`)
+
+func extractArxivIDFromURL(u string) string {
+	m := arxivIDPattern.FindStringSubmatch(strings.TrimSpace(u))
+	if len(m) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
 
 func getenv(k, d string) string {
 	if v := os.Getenv(k); v != "" {

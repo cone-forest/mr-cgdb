@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"log"
 	"strconv"
 	"strings"
 
@@ -77,7 +78,7 @@ func ResolveRSSFeedURL(ctx context.Context, p *pgxpool.Pool, feedID string) (str
 
 // ListProfileIDsForRSSRouting returns profile IDs with enabled rss sources matching sourceValue.
 func ListProfileIDsForRSSRouting(ctx context.Context, p *pgxpool.Pool, sourceValue string) ([]int64, error) {
-	sourceValue = strings.TrimSpace(strings.ToLower(sourceValue))
+	sourceValue = normalizeFeedURLForMatch(sourceValue)
 	if sourceValue == "" {
 		return nil, nil
 	}
@@ -86,7 +87,7 @@ func ListProfileIDsForRSSRouting(ctx context.Context, p *pgxpool.Pool, sourceVal
 		FROM profile_sources
 		WHERE enabled = true
 		  AND source_type = 'rss'
-		  AND lower(source_value) = $1
+		  AND trim(trailing '/' from regexp_replace(lower(trim(source_value)), '^(https?:)?//', '')) = $1
 	`, sourceValue)
 	if err != nil {
 		return nil, err
@@ -101,6 +102,15 @@ func ListProfileIDsForRSSRouting(ctx context.Context, p *pgxpool.Pool, sourceVal
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+func normalizeFeedURLForMatch(v string) string {
+	v = strings.TrimSpace(strings.ToLower(v))
+	v = strings.TrimPrefix(v, "https://")
+	v = strings.TrimPrefix(v, "http://")
+	v = strings.TrimPrefix(v, "//")
+	v = strings.TrimSuffix(v, "/")
+	return v
 }
 
 // ProfileFeedMeta summarizes subscription + global paper counts for candidate UI hints.
@@ -124,6 +134,89 @@ func EnqueueProfileAnalyzeJob(ctx context.Context, p *pgxpool.Pool, profileID, p
 
 // EnqueueProfileAnalyzeBackfill queues analysis jobs for existing papers matching profile sources.
 func EnqueueProfileAnalyzeBackfill(ctx context.Context, p *pgxpool.Pool, profileID int64) (int64, error) {
+	var eligibleArxiv int64
+	err := p.QueryRow(ctx, `
+		SELECT COUNT(*)::bigint FROM papers pa
+		WHERE pa.source = 'arxiv'
+		  AND (
+			EXISTS (
+				SELECT 1 FROM profile_sources ps
+				WHERE ps.profile_id = $1::bigint
+				  AND ps.enabled = true
+				  AND (
+					ps.source_type = 'arxiv_query'
+					OR (
+						ps.source_type = 'rss'
+						AND (
+							trim(trailing '/' from regexp_replace(lower(trim(ps.source_value)), '^(https?:)?//', '')) LIKE 'rss.arxiv.org/rss/%'
+							OR trim(trailing '/' from regexp_replace(lower(trim(ps.source_value)), '^(https?:)?//', '')) LIKE 'export.arxiv.org/rss/%'
+						)
+					)
+				  )
+			)
+			OR NOT EXISTS (
+				SELECT 1 FROM profile_sources ps
+				WHERE ps.profile_id = $1::bigint
+			)
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM profile_paper_analysis a
+			WHERE a.profile_id = $1::bigint AND a.paper_id = pa.id
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM jobs j
+			WHERE j.kind = 'profile_analyze'
+			  AND j.status IN ('pending', 'running')
+			  AND COALESCE(j.payload->>'profileId', '') <> ''
+			  AND COALESCE(j.payload->>'paperId', '') <> ''
+			  AND (j.payload->>'profileId')::bigint = $1::bigint
+			  AND (j.payload->>'paperId')::bigint = pa.id
+		  )
+	`, profileID).Scan(&eligibleArxiv)
+	if err != nil {
+		return 0, err
+	}
+
+	var eligibleRSS int64
+	err = p.QueryRow(ctx, `
+		SELECT COUNT(*)::bigint FROM papers pa
+		LEFT JOIN rss_feeds rf ON ('rss:feed-' || rf.id::text) = pa.source
+		WHERE pa.source LIKE 'rss:feed-%'
+		  AND (
+			(
+				rf.id IS NOT NULL
+				AND EXISTS (
+					SELECT 1 FROM profile_sources ps
+					WHERE ps.profile_id = $1::bigint
+					  AND ps.enabled = true
+					  AND ps.source_type = 'rss'
+					  AND trim(trailing '/' from regexp_replace(lower(trim(ps.source_value)), '^(https?:)?//', '')) =
+					      trim(trailing '/' from regexp_replace(lower(trim(rf.url)), '^(https?:)?//', ''))
+				)
+			)
+			OR NOT EXISTS (
+				SELECT 1 FROM profile_sources ps
+				WHERE ps.profile_id = $1::bigint
+			)
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM profile_paper_analysis a
+			WHERE a.profile_id = $1::bigint AND a.paper_id = pa.id
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM jobs j
+			WHERE j.kind = 'profile_analyze'
+			  AND j.status IN ('pending', 'running')
+			  AND COALESCE(j.payload->>'profileId', '') <> ''
+			  AND COALESCE(j.payload->>'paperId', '') <> ''
+			  AND (j.payload->>'profileId')::bigint = $1::bigint
+			  AND (j.payload->>'paperId')::bigint = pa.id
+		  )
+	`, profileID).Scan(&eligibleRSS)
+	if err != nil {
+		return 0, err
+	}
+
 	tag1, err := p.Exec(ctx, `
 		INSERT INTO jobs (kind, status, payload)
 		SELECT 'profile_analyze', 'pending', jsonb_build_object('profileId', $1::bigint, 'paperId', pa.id)
@@ -134,7 +227,16 @@ func EnqueueProfileAnalyzeBackfill(ctx context.Context, p *pgxpool.Pool, profile
 				SELECT 1 FROM profile_sources ps
 				WHERE ps.profile_id = $1::bigint
 				  AND ps.enabled = true
-				  AND ps.source_type = 'arxiv_query'
+				  AND (
+					ps.source_type = 'arxiv_query'
+					OR (
+						ps.source_type = 'rss'
+						AND (
+							trim(trailing '/' from regexp_replace(lower(trim(ps.source_value)), '^(https?:)?//', '')) LIKE 'rss.arxiv.org/rss/%'
+							OR trim(trailing '/' from regexp_replace(lower(trim(ps.source_value)), '^(https?:)?//', '')) LIKE 'export.arxiv.org/rss/%'
+						)
+					)
+				  )
 			)
 			OR NOT EXISTS (
 				SELECT 1 FROM profile_sources ps
@@ -172,7 +274,8 @@ func EnqueueProfileAnalyzeBackfill(ctx context.Context, p *pgxpool.Pool, profile
 					WHERE ps.profile_id = $1::bigint
 					  AND ps.enabled = true
 					  AND ps.source_type = 'rss'
-					  AND lower(ps.source_value) = lower(rf.url)
+					  AND trim(trailing '/' from regexp_replace(lower(trim(ps.source_value)), '^(https?:)?//', '')) =
+					      trim(trailing '/' from regexp_replace(lower(trim(rf.url)), '^(https?:)?//', ''))
 				)
 			)
 			OR NOT EXISTS (
@@ -197,5 +300,10 @@ func EnqueueProfileAnalyzeBackfill(ctx context.Context, p *pgxpool.Pool, profile
 	if err != nil {
 		return 0, err
 	}
-	return tag1.RowsAffected() + tag2.RowsAffected(), nil
+	insertArxiv := tag1.RowsAffected()
+	insertRSS := tag2.RowsAffected()
+	total := insertArxiv + insertRSS
+	log.Printf("mr-cgdb store ProfileAnalyzeBackfill profile_id=%d eligible_arxiv_slots=%d eligible_rss_slots=%d inserted_jobs_arxiv=%d inserted_jobs_rss=%d inserted_total=%d",
+		profileID, eligibleArxiv, eligibleRSS, insertArxiv, insertRSS, total)
+	return total, nil
 }

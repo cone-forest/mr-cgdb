@@ -59,3 +59,4 @@ Open UI at <http://localhost:8080>.
 - First registered account is automatically marked admin.
 - PDF cache cleanup removes files not referenced by any profile like for 3+ days.
 - Profile configuration is profile-local; there is no global inherited config hierarchy.
+- **arXiv API:** export.arxiv.org allows about **one request per 3 seconds**. This codebase rate-limits each process (`internal/arxiv`) and retries **429** using `Retry-After`. Admin rescan requests **2000** rows per page (API maximum slice). Set **`ARXIV_API_MIN_INTERVAL`** (Go `time.ParseDuration`, ≥ `3s`) on **`api`** and **`arxiv-watcher`** if both hit arXiv—each container has its own limiter, so run them conservative (e.g. `4s`) during overlapping workloads.

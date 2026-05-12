@@ -20,6 +20,25 @@ func UpdateShadowResult(ctx context.Context, p *pgxpool.Pool, id int64, emb []fl
 	return err
 }
 
+// UpdatePaperEmbedding writes/refreshes only the embedding column for a paper.
+func UpdatePaperEmbedding(ctx context.Context, p *pgxpool.Pool, id int64, emb []float64) error {
+	_, err := p.Exec(ctx, `
+		UPDATE papers
+		SET embedding = $2::float8[]
+		WHERE id = $1
+	`, id, emb)
+	return err
+}
+
+func UpdatePaperPDFURL(ctx context.Context, p *pgxpool.Pool, id int64, pdfURL string) error {
+	_, err := p.Exec(ctx, `
+		UPDATE papers
+		SET pdf_url = $2
+		WHERE id = $1
+	`, id, nullIfEmpty(pdfURL))
+	return err
+}
+
 // SetLLMOK records a successful LLM result and stamps relevant_at the first time the row becomes digest-eligible.
 func SetLLMOK(ctx context.Context, p *pgxpool.Pool, id int64, relevant bool, raw string) error {
 	_, err := p.Exec(ctx, `

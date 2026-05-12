@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"mr-cgdb/internal/identity"
@@ -17,6 +18,40 @@ import (
 	"mr-cgdb/internal/store"
 	"mr-cgdb/internal/wire"
 )
+
+var (
+	kwFrames       atomic.Uint64
+	kwSkipNegTitle atomic.Uint64
+	kwSkipGlobalKW atomic.Uint64
+	kwInserted     atomic.Uint64
+	kwMissMu       sync.Mutex
+	kwMissSamples  []string
+)
+
+func kwRecordGlobalKeywordMiss(title string) {
+	kwSkipGlobalKW.Add(1)
+	t := strings.TrimSpace(title)
+	if len(t) > 140 {
+		t = t[:140] + "…"
+	}
+	kwMissMu.Lock()
+	defer kwMissMu.Unlock()
+	if len(kwMissSamples) < 16 {
+		kwMissSamples = append(kwMissSamples, t)
+	}
+}
+
+func kwAfterIngestFrame() {
+	n := kwFrames.Add(1)
+	if n != 1 && n%250 != 0 {
+		return
+	}
+	kwMissMu.Lock()
+	samples := append([]string(nil), kwMissSamples...)
+	kwMissMu.Unlock()
+	log.Printf("mr-cgdb keyword ingest frames=%d inserted_total=%d skip_negative_title_gate=%d skip_global_keyword_file_gate=%d sample_titles_that_failed_global_kw=%q",
+		n, kwInserted.Load(), kwSkipNegTitle.Load(), kwSkipGlobalKW.Load(), samples)
+}
 
 func main() {
 	dsn := os.Getenv("DATABASE_URL")
@@ -30,10 +65,22 @@ func main() {
 	}
 	kf := getenv("KEYWORDS_FILE", "/config/keywords.txt")
 	negTitleKeywords := splitCSV(getenv("NEGATIVE_TITLE_KEYWORDS", "gaussian,splatt"))
+	// Only KEYWORD_GLOBAL_GATE=strict applies keywords.txt before DB insert. Default leaves relevance to per-profile settings.
+	globalGateStrict := strings.EqualFold(strings.TrimSpace(os.Getenv("KEYWORD_GLOBAL_GATE")), "strict")
 
 	defaultMatcher, err := keywords.Load(kf)
 	if err != nil {
 		log.Fatalf("keywords: %v", err)
+	}
+	nPhrases := defaultMatcher.PhraseCount()
+	applyGlobalPhraseGate := globalGateStrict && nPhrases > 0
+	switch {
+	case globalGateStrict && nPhrases == 0:
+		log.Printf("mr-cgdb keyword KEYWORD_GLOBAL_GATE=strict but %s has 0 phrases — no global substring gate", kf)
+	case globalGateStrict:
+		log.Printf("mr-cgdb keyword KEYWORD_GLOBAL_GATE=strict — applying global substring allowlist from %s (phrase_count=%d)", kf, nPhrases)
+	default:
+		log.Printf("mr-cgdb keyword KEYWORD_GLOBAL_GATE not strict (default) — phrases file %s not used at ingest; relevance uses each profile's keywords / LLM", kf)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -44,6 +91,36 @@ func main() {
 		log.Fatal(err)
 	}
 	defer pool.Close()
+	var profileKWCacheMu sync.Mutex
+	profileKWCache := map[int64]*keywords.Matcher{}
+	profileKWHasKeywords := map[int64]bool{}
+
+	profileMatchesByKeywords := func(profileID int64, text string) (bool, error) {
+		profileKWCacheMu.Lock()
+		m, okM := profileKWCache[profileID]
+		hasKW, okHas := profileKWHasKeywords[profileID]
+		profileKWCacheMu.Unlock()
+		if okM && okHas {
+			if !hasKW {
+				return false, nil
+			}
+			return m.MatchText(text), nil
+		}
+		cfg, e := store.GetProfileConfig(ctx, pool, profileID)
+		if e != nil {
+			return false, e
+		}
+		hasKW = len(cfg.PositiveKeywords) > 0
+		m = keywords.New(cfg.PositiveKeywords)
+		profileKWCacheMu.Lock()
+		profileKWCache[profileID] = m
+		profileKWHasKeywords[profileID] = hasKW
+		profileKWCacheMu.Unlock()
+		if !hasKW {
+			return false, nil
+		}
+		return m.MatchText(text), nil
+	}
 
 	var pMu sync.Mutex
 	var pconn net.Conn
@@ -66,7 +143,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("keyword listening on %s", kw)
+	log.Printf("mr-cgdb keyword listening addr=%s keywords_file=%s global_phrase_count=%d apply_global_phrase_gate=%v negative_title_terms=%v pipeline_addr=%s",
+		ln.Addr().String(), kf, nPhrases, applyGlobalPhraseGate, negTitleKeywords, pipeAddr)
 
 	reader := func(c net.Conn) {
 		defer c.Close()
@@ -75,11 +153,14 @@ func main() {
 			if err := wire.ReadFrame(c, &it); err != nil {
 				return
 			}
+			kwAfterIngestFrame()
 			if titleHasAny(it.Title, negTitleKeywords) {
+				kwSkipNegTitle.Add(1)
 				continue
 			}
 			blob := strings.ToLower(it.Title) + " " + strings.ToLower(it.Abstract)
-			if !defaultMatcher.MatchText(blob) {
+			if applyGlobalPhraseGate && !defaultMatcher.MatchText(blob) {
+				kwRecordGlobalKeywordMiss(it.Title)
 				continue
 			}
 			wkstr := identity.WeakKey(it.Title, it.Year, it.Authors)
@@ -92,7 +173,15 @@ func main() {
 				log.Printf("insert: %v", err)
 				continue
 			}
-			// Phase 2: automatically fan out profile analysis jobs by source subscription.
+			kwInserted.Add(1)
+			nIns := kwInserted.Load()
+			if nIns <= 5 || nIns%100 == 0 {
+				log.Printf("mr-cgdb keyword inserted_into_corpus paper_id=%d source=%s title=%q",
+					id, it.Source, truncateKeywordTitle(it.Title))
+			}
+			// Phase 2: fan out profile analysis jobs by source subscription first,
+			// then keep only profiles whose own positive keywords match this paper.
+			candidateProfileIDs := map[int64]struct{}{}
 			switch {
 			case it.Source == "arxiv" || it.ArxivID != nil:
 				profileIDs, e := store.ListProfileIDsForArxivRouting(ctx, pool)
@@ -100,9 +189,7 @@ func main() {
 					log.Printf("list arxiv-routed profiles: %v", e)
 				} else {
 					for _, pid := range profileIDs {
-						if e := store.EnqueueProfileAnalyzeJob(ctx, pool, pid, id); e != nil {
-							log.Printf("enqueue profile analyze pid=%d paper=%d: %v", pid, id, e)
-						}
+						candidateProfileIDs[pid] = struct{}{}
 					}
 				}
 			case it.FeedID != "":
@@ -116,9 +203,7 @@ func main() {
 						log.Printf("list rss-routed profiles: %v", e)
 					} else {
 						for _, pid := range profileIDs {
-							if e := store.EnqueueProfileAnalyzeJob(ctx, pool, pid, id); e != nil {
-								log.Printf("enqueue profile analyze pid=%d paper=%d: %v", pid, id, e)
-							}
+							candidateProfileIDs[pid] = struct{}{}
 						}
 					}
 				}
@@ -128,10 +213,29 @@ func main() {
 				log.Printf("list bare profiles: %v", e)
 			} else {
 				for _, pid := range bare {
-					if e := store.EnqueueProfileAnalyzeJob(ctx, pool, pid, id); e != nil {
-						log.Printf("enqueue bare profile analyze pid=%d paper=%d: %v", pid, id, e)
-					}
+					candidateProfileIDs[pid] = struct{}{}
 				}
+			}
+			matchedProfiles := 0
+			for pid := range candidateProfileIDs {
+				ok, me := profileMatchesByKeywords(pid, blob)
+				if me != nil {
+					log.Printf("profile keyword match profile_id=%d paper_id=%d: %v", pid, id, me)
+					continue
+				}
+				if !ok {
+					continue
+				}
+				if e := store.EnqueueProfileAnalyzeJob(ctx, pool, pid, id); e != nil {
+					log.Printf("enqueue profile analyze pid=%d paper=%d: %v", pid, id, e)
+					continue
+				}
+				matchedProfiles++
+			}
+			if matchedProfiles == 0 {
+				log.Printf("mr-cgdb keyword globally_irrelevant paper_id=%d source=%s reason=no_profile_keyword_match title=%q",
+					id, it.Source, truncateKeywordTitle(it.Title))
+				continue
 			}
 			job := model.PipelineWork{PaperID: id}
 			if err := dialP(); err != nil {
@@ -179,6 +283,14 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+func truncateKeywordTitle(title string) string {
+	t := strings.TrimSpace(title)
+	if len(t) > 160 {
+		return t[:160] + "…"
+	}
+	return t
 }
 
 func titleHasAny(title string, kws []string) bool {

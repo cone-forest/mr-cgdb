@@ -23,6 +23,7 @@ type Options struct {
 	SystemPrompt       string
 	LLMMaxAttempts     int
 	HTTPClientTimeout  time.Duration
+	EnableLLM          bool
 }
 
 // Processor runs embedding+shadow+LLM for a paper_id.
@@ -114,6 +115,12 @@ func (p *Processor) Process(ctx context.Context, id int64) error {
 		if e := store.UpdateShadowResult(ctx, p.Pool, id, emb, maxPtr, wpPtr, ap); e != nil {
 			return e
 		}
+	}
+	if !p.Opt.EnableLLM {
+		if embedErr != nil {
+			return store.SetLLMPending(ctx, p.Pool, id, "embed failed: "+embedErr.Error())
+		}
+		return nil
 	}
 	sys := strings.TrimSpace(p.Opt.SystemPrompt)
 	if sys == "" {

@@ -23,6 +23,14 @@ func New(phrases []string) *Matcher {
 	return &Matcher{phrases: out}
 }
 
+// PhraseCount returns how many non-empty phrases this matcher uses (global gate diagnostics).
+func (m *Matcher) PhraseCount() int {
+	if m == nil {
+		return 0
+	}
+	return len(m.phrases)
+}
+
 // Load reads one phrase per line, ignores empty and # comments.
 func Load(path string) (*Matcher, error) {
 	f, err := os.Open(path)

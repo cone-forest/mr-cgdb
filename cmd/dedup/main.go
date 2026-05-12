@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"mr-cgdb/internal/identity"
@@ -41,6 +42,9 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("dedup listening on %s, forwarding to %s", listen, keyword)
+
+	var forwardedNew atomic.Uint64
+	var mergedDup atomic.Uint64
 
 	var kwMu sync.Mutex
 	var kw net.Conn
@@ -81,10 +85,15 @@ func main() {
 				src = "rss:" + it.FeedID
 			}
 			if id > 0 {
+				mergedDup.Add(1)
 				if err := store.MergeSource(ctx, pool, id, src); err != nil {
 					log.Printf("merge: %v", err)
 				}
 				continue
+			}
+			nf := forwardedNew.Add(1)
+			if nf == 1 || nf%200 == 0 {
+				log.Printf("mr-cgdb dedup forwarded_new_to_keyword=%d merged_duplicate_identity_total=%d", nf, mergedDup.Load())
 			}
 			if err := dialKW(); err != nil {
 				log.Printf("dial keyword: %v", err)

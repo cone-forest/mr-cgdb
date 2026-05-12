@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -70,26 +71,103 @@ func decodeAtom(b []byte) ([]Entry, error) {
 }
 
 // SearchPage calls export.arxiv.org with the full query string (without base URL) and decodes the result.
+// Requests are globally rate-limited for this process (see ratelimit.go). Transient 429 and 5xx responses are retried.
 func SearchPage(ctx context.Context, q string) ([]Entry, error) {
-	u := "http://export.arxiv.org/api/query?" + q
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
+	baseURL := "http://export.arxiv.org/api/query?"
+	u := baseURL + q
+	cl := &http.Client{Timeout: 120 * time.Second}
+	var lastErr error
+	const maxAttempts = 8
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := rateWait(ctx); err != nil {
+			log.Printf("mr-cgdb arxiv cancelled_or_deadline attempt=%d err=%v", attempt+1, err)
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", "mr-cgdb/1.0 (local paper ingest; polite batching)")
+		log.Printf("mr-cgdb arxiv http_request attempt=%d/%d url_byte_len=%d query_preview=%q",
+			attempt+1, maxAttempts, len(u), previewEncodedQuery(q, 220))
+		t0 := time.Now()
+		resp, err := cl.Do(req)
+		if err != nil {
+			log.Printf("mr-cgdb arxiv http_transport_error attempt=%d elapsed=%s err=%v",
+				attempt+1, time.Since(t0).Round(time.Millisecond), err)
+			rateNoteResponse(0, "")
+			return nil, err
+		}
+		body, rerr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		elapsed := time.Since(t0)
+		if rerr != nil {
+			log.Printf("mr-cgdb arxiv read_body_error attempt=%d status=%s bytes_read_failed elapsed=%s err=%v",
+				attempt+1, resp.Status, elapsed.Round(time.Millisecond), rerr)
+			rateNoteResponse(resp.StatusCode, resp.Header.Get("Retry-After"))
+			return nil, rerr
+		}
+		log.Printf("mr-cgdb arxiv http_response attempt=%d status=%s body_bytes=%d elapsed=%s content_type=%q",
+			attempt+1, resp.Status, len(body), elapsed.Round(time.Millisecond), resp.Header.Get("Content-Type"))
+		switch resp.StatusCode {
+		case http.StatusOK:
+			rateNoteResponse(http.StatusOK, "")
+			out, decErr := decodeAtom(body)
+			if decErr != nil {
+				log.Printf("mr-cgdb arxiv atom_decode_error attempt=%d err=%v body_prefix=%q",
+					attempt+1, decErr, previewBytes(body, 180))
+				return nil, decErr
+			}
+			log.Printf("mr-cgdb arxiv success attempt=%d entries_parsed=%d", attempt+1, len(out))
+			return out, nil
+		case http.StatusTooManyRequests:
+			lastErr = fmt.Errorf("arxiv http 429 Too Many Requests")
+			log.Printf("mr-cgdb arxiv will_retry attempt=%d reason=429 Retry-After=%q body_prefix=%q",
+				attempt+1, resp.Header.Get("Retry-After"), previewBytes(body, 120))
+			rateNoteResponse(resp.StatusCode, resp.Header.Get("Retry-After"))
+			continue
+		case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			lastErr = fmt.Errorf("arxiv http %s", resp.Status)
+			log.Printf("mr-cgdb arxiv will_retry attempt=%d reason=transient_5xx status=%s Retry-After=%q body_prefix=%q",
+				attempt+1, resp.Status, resp.Header.Get("Retry-After"), previewBytes(body, 120))
+			rateNoteResponse(resp.StatusCode, resp.Header.Get("Retry-After"))
+			continue
+		default:
+			log.Printf("mr-cgdb arxiv non_retryable_status attempt=%d status=%s body_prefix=%q",
+				attempt+1, resp.Status, previewBytes(body, 160))
+			rateNoteResponse(resp.StatusCode, "")
+			return nil, fmt.Errorf("arxiv http %s", resp.Status)
+		}
 	}
-	req.Header.Set("User-Agent", "mr-cgdb/1.0 (local paper ingest; polite batching)")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
+	log.Printf("mr-cgdb arxiv exhausted_retries attempts=%d last_err=%v", maxAttempts, lastErr)
+	if lastErr != nil {
+		return nil, lastErr
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("arxiv http %s", resp.Status)
+	return nil, fmt.Errorf("arxiv: too many retries")
+}
+
+func previewEncodedQuery(q string, max int) string {
+	if max <= 3 {
+		return "…"
 	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	q = strings.TrimSpace(q)
+	if len(q) <= max {
+		return q
 	}
-	return decodeAtom(body)
+	return q[:max] + "…"
+}
+
+func previewBytes(b []byte, max int) string {
+	if max <= 3 {
+		return "…"
+	}
+	s := strings.TrimSpace(string(b))
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", "")
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 func extractArxivID(arxivIDURL string) string {

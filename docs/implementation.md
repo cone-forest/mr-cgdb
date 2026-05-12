@@ -76,7 +76,7 @@ Failures are persisted and intentionally not auto-retried.
 - open cached public PDFs
 - inspect/retry failed jobs
 - review analysis candidate feed with filters and one-click like from analysis
-- trigger profile analysis backfill jobs for existing corpus rows
+- **Reload** on the candidate feed POSTs `/api/profiles/{id}/analysis/backfill`, which queues `profile_analyze` jobs for corpus papers matching the profile’s sources (see worker); then the UI refetches candidates. Metrics filters only change the GET query—they do not enqueue work
 
 The old digest/pending interface is removed from the main UI flow.
 

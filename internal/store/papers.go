@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -90,12 +91,18 @@ func InsertAfterKeyword(ctx context.Context, p *pgxpool.Pool, it *model.IngestIt
 	if it.Year != nil {
 		y = it.Year
 	}
+	pdfURL := ""
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(it.URL)), ".pdf") {
+		pdfURL = strings.TrimSpace(it.URL)
+	} else if arx != nil && strings.TrimSpace(*arx) != "" {
+		pdfURL = "https://arxiv.org/pdf/" + strings.TrimSpace(*arx) + ".pdf"
+	}
 	var id int64
 	err := p.QueryRow(ctx, `
-		INSERT INTO papers (arxiv_id, doi, weak_key, url, title, year, first_author, abstract, source, sources, llm_status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,'pending')
+		INSERT INTO papers (arxiv_id, doi, weak_key, url, pdf_url, title, year, first_author, abstract, source, sources, llm_status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,'pending')
 		RETURNING id
-	`, arx, d, wk, it.URL, it.Title, y, fa, it.Abstract, src, string(initial)).Scan(&id)
+	`, arx, d, wk, it.URL, nullIfEmpty(pdfURL), it.Title, y, fa, it.Abstract, src, string(initial)).Scan(&id)
 	return id, err
 }
 
@@ -105,6 +112,7 @@ type PaperRow struct {
 	ArxivID       *string
 	DOI           *string
 	URL           *string
+	PDFURL        *string
 	Title         string
 	Year          *int
 	FirstAuthor   *string
@@ -125,7 +133,7 @@ type PaperRow struct {
 // GetPaperRow for pipeline updates.
 func GetPaperRow(ctx context.Context, p *pgxpool.Pool, id int64) (*PaperRow, error) {
 	var r PaperRow
-	var arx, doi, url, first, sseed, hlm, llmraw, llmerr *string
+	var arx, doi, url, pdfURL, first, sseed, hlm, llmraw, llmerr *string
 	var y *int
 	var shmax *float64
 	var shp *bool
@@ -134,13 +142,13 @@ func GetPaperRow(ctx context.Context, p *pgxpool.Pool, id int64) (*PaperRow, err
 	var ra *time.Time
 	var sources []byte
 	err := p.QueryRow(ctx, `
-		SELECT id, arxiv_id, doi, url, title, year, first_author, abstract, sources,
+		SELECT id, arxiv_id, doi, url, pdf_url, title, year, first_author, abstract, sources,
 		       shadow_max_sim, shadow_would_pass, shadow_argmax_seed,
 		       llm_relevant, llm_status, llm_raw, last_llm_error,
 		       human_resolved, human_relevant, hand_label_main, relevant_at, created_at
 		FROM papers WHERE id = $1
 	`, id).Scan(
-		&r.ID, &arx, &doi, &url, &r.Title, &y, &first, &r.Abstract, &sources,
+		&r.ID, &arx, &doi, &url, &pdfURL, &r.Title, &y, &first, &r.Abstract, &sources,
 		&shmax, &shp, &sseed, &llmrel, &r.LLMStatus, &llmraw, &llmerr,
 		&r.HumanResolved, &hr, &hlm, &ra, &r.CreatedAt,
 	)
@@ -152,7 +160,7 @@ func GetPaperRow(ctx context.Context, p *pgxpool.Pool, id int64) (*PaperRow, err
 	if err := json.Unmarshal(sources, &r.Sources); err != nil {
 		return nil, err
 	}
-	r.ArxivID, r.DOI, r.URL = arx, doi, url
+	r.ArxivID, r.DOI, r.URL, r.PDFURL = arx, doi, url, pdfURL
 	r.Year = y
 	r.FirstAuthor = first
 	r.ShadowMax, r.ShadowPass, r.ShadowArgmax = shmax, shp, sseed

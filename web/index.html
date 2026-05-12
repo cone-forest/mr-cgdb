@@ -363,6 +363,14 @@
       -webkit-line-clamp: 2;
       overflow: hidden;
     }
+    button.explore-card-link {
+      border: none;
+      background: none;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      width: 100%;
+    }
     .list { display: grid; gap: 12px; }
     .paper {
       border: 1px solid var(--border);
@@ -448,6 +456,9 @@
 
     #profileCreateBody textarea { margin-top: 10px; }
     #profileCreateBody input[id^="new"] { min-width: 200px; flex: 1; }
+    #currentProfileEditor textarea { margin-top: 10px; }
+    #currentProfileEditor input[id^="editProfile"] { min-width: 200px; flex: 1; }
+    #editProfileSlugDisplay { font-size: 13px; }
 
     @media (max-width: 640px) {
       .header-inner { height: auto; min-height: 56px; padding-top: 10px; padding-bottom: 10px; flex-wrap: wrap; }
@@ -486,18 +497,41 @@
 
   <div class="page-shell">
     <section id="publicView">
-      <div class="page-hero">
-        <h1 id="exploreTitle">Explore</h1>
-        <p>Open research profiles curated by contributors. Browse public collections without signing in—or create your own after you join.</p>
-      </div>
-      <div class="panel">
-        <div class="panel-head"><h2>Public profiles</h2></div>
-        <div class="panel-body">
-          <div class="explore-controls row toolbar" style="margin-bottom:14px;">
-            <input id="publicSearchQ" type="text" autocomplete="off" placeholder="Find a profile…" aria-label="Search profiles" />
-            <button id="publicSearchBtn" type="button">Search</button>
+      <div id="publicExploreBrowse">
+        <div class="page-hero">
+          <h1 id="exploreTitle">Explore</h1>
+          <p>Open research profiles curated by contributors. Browse public collections without signing in—or create your own after you join.</p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Public profiles</h2></div>
+          <div class="panel-body">
+            <div class="explore-controls row toolbar" style="margin-bottom:14px;">
+              <input id="publicSearchQ" type="text" autocomplete="off" placeholder="Find a profile…" aria-label="Search profiles" />
+              <button id="publicSearchBtn" type="button">Search</button>
+            </div>
+            <div id="publicProfilesList" class="grid"></div>
           </div>
-          <div id="publicProfilesList" class="grid"></div>
+        </div>
+      </div>
+      <div id="publicProfileDetail" class="hidden">
+        <div class="row toolbar" style="margin-bottom:16px;">
+          <button type="button" id="publicProfileBackBtn" class="nav-link">← Back to Explore</button>
+        </div>
+        <div class="page-hero">
+          <h1 id="publicProfileTitle">Public profile</h1>
+          <p id="publicProfileMeta" class="muted"></p>
+          <p id="publicProfileDesc" class="muted" style="margin-top:10px;line-height:1.5;"></p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Relevant papers</h2></div>
+          <div class="panel-body">
+            <div class="row toolbar">
+              <input id="publicProfileTagFilter" type="text" autocomplete="off" placeholder="Filter by tag" aria-label="Filter papers by tag" />
+              <button type="button" id="publicProfileReloadBtn">Reload</button>
+            </div>
+            <div id="publicProfileStatus" class="muted" style="margin-bottom:10px;"></div>
+            <div id="publicProfilePapersList" class="list"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -508,10 +542,11 @@
         <p>Ingestion plus profile filters surface papers that match your configured sources.</p>
       </div>
       <div class="panel">
-        <div class="panel-head">
+          <div class="panel-head">
           <h2>Feed</h2>
           <div class="row toolbar">
-            <button id="reloadCandidatesBtn" type="button">Reload</button>
+            <button id="updateCandidatesBtn" type="button" title="Queue profile analysis jobs and refresh this view">Update view</button>
+            <button id="openArxivRescanModalBtn" type="button" class="hidden" title="Administrator-only arXiv backfill">Run rescan…</button>
             <select id="adminMetricsFilter" class="hidden">
               <option value="all">Metrics: All</option>
               <option value="keyword">Metrics: Keyword pass</option>
@@ -521,21 +556,6 @@
           </div>
         </div>
         <div class="panel-body">
-          <div id="adminArxivPanel" class="hidden panel" style="margin-bottom:14px;background:rgba(22,27,34,0.55);">
-            <div class="panel-head"><h2 style="font-size:15px;margin:0">Administrator · arXiv ingest</h2></div>
-            <div class="panel-body">
-              <p class="muted" style="margin:0 0 12px;font-size:13px;line-height:1.45">Pull extra arXiv results for a <strong>submitted-date window</strong> (same TCP path as the watcher). Queries export.arxiv.org with ~3s pauses between pages; keep windows reasonably small.</p>
-              <div class="row toolbar">
-                <label class="muted" style="display:grid;gap:6px;font-size:12px;">Since (browser local)<br /><input id="rescanSince" type="datetime-local" autocomplete="off" /></label>
-                <label class="muted" style="display:grid;gap:6px;font-size:12px;">Until<br /><input id="rescanUntil" type="datetime-local" autocomplete="off" /></label>
-              </div>
-              <div class="row toolbar">
-                <label class="muted" style="display:grid;gap:6px;flex:1;min-width:220px;font-size:12px;">Inner search (arXiv query syntax)<br /><input id="rescanQuery" type="text" autocomplete="off" placeholder="cat:cs.GR" style="width:100%" /></label>
-                <button type="button" id="arxivRescanBtn">Run rescan</button>
-              </div>
-              <div class="muted" id="arxivRescanStatus"></div>
-            </div>
-          </div>
           <div class="muted" id="candidateMeta" style="margin-bottom:10px;line-height:1.45;"></div>
           <div class="muted" id="candidateStatus"></div>
           <div id="candidateList" class="list"></div>
@@ -553,6 +573,7 @@
         <div class="panel-body">
           <div class="row toolbar">
             <input id="relevantTagFilter" type="text" autocomplete="off" placeholder="Filter by tag" />
+            <button id="addRelevantPaperBtn" type="button">Add Paper</button>
             <button id="reloadRelevantBtn" type="button">Reload</button>
           </div>
           <div id="relevantList" class="list"></div>
@@ -563,7 +584,32 @@
     <section id="myProfilesView" class="hidden">
       <div class="page-hero">
         <h1>Profile settings</h1>
-        <p>Create profiles, tune keywords, prompts, and sources. Profile slugs are immutable once saved.</p>
+        <p>Create profiles and tune each profile’s keywords, prompts, and sources. Profile slugs are immutable once saved.</p>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Current profile</h2></div>
+        <div class="panel-body">
+          <p class="muted" id="currentProfileHint"></p>
+          <div id="currentProfileEditor">
+            <p class="muted" style="margin:0 0 12px;line-height:1.45"><strong>Slug</strong> <code id="editProfileSlugDisplay"></code> · immutable · visible in URL paths</p>
+            <div class="row">
+              <input id="editProfileName" autocomplete="off" placeholder="Display name" aria-label="Profile display name" />
+              <select id="editProfileVisibility" aria-label="Profile visibility">
+                <option value="private">private</option>
+                <option value="public">public</option>
+              </select>
+            </div>
+            <textarea id="editProfileDescription" autocomplete="off" placeholder="Description"></textarea>
+            <textarea id="editProfilePos" autocomplete="off" placeholder="Positive keywords (one per line)"></textarea>
+            <textarea id="editProfileNeg" autocomplete="off" placeholder="Negative title keywords (one per line)"></textarea>
+            <textarea id="editProfilePrompt" autocomplete="off" placeholder="LLM prompt"></textarea>
+            <textarea id="editProfileSources" autocomplete="off" placeholder="Sources, one per line: rss:https://… or arxiv_query:search_query=…"></textarea>
+            <div class="row">
+              <button type="button" id="saveCurrentProfileBtn">Save changes</button>
+              <span id="saveCurrentProfileStatus" class="muted"></span>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="panel">
         <div class="panel-head">
@@ -628,13 +674,55 @@
     </div>
   </div>
 
+  <div id="manualPaperModalBg" class="modalBg">
+    <div class="modal">
+      <h3>Add Paper to Relevant</h3>
+      <div class="row"><input id="manualPaperURL" type="text" autocomplete="off" placeholder="Paper URL (optional, arXiv URL supported)" style="flex:1" /></div>
+      <div class="row"><input id="manualPaperPDFURL" type="text" autocomplete="off" placeholder="Direct PDF URL (optional)" style="flex:1" /></div>
+      <div class="row"><input id="manualPaperArxivID" type="text" autocomplete="off" placeholder="arXiv ID (optional, e.g. 2501.01234)" style="flex:1" /></div>
+      <div class="row"><input id="manualPaperTitle" type="text" autocomplete="off" placeholder="Title" style="flex:1" /></div>
+      <div class="row"><input id="manualPaperFirstAuthor" type="text" autocomplete="off" placeholder="First author (optional)" style="flex:1" /></div>
+      <div class="row"><input id="manualPaperYear" type="number" autocomplete="off" placeholder="Year (optional)" style="width:140px" /></div>
+      <div class="row"><textarea id="manualPaperAbstract" autocomplete="off" placeholder="Abstract"></textarea></div>
+      <div class="row"><input id="manualPaperTags" type="text" autocomplete="off" placeholder="Tags, comma-separated (optional)" style="flex:1" /></div>
+      <div class="row"><textarea id="manualPaperNote" autocomplete="off" placeholder="Comment (optional)"></textarea></div>
+      <div class="row toolbar">
+        <button id="confirmManualPaperBtn" type="button">Add to Relevant</button>
+        <button id="cancelManualPaperBtn" type="button">Cancel</button>
+      </div>
+      <div id="manualPaperStatus" class="muted"></div>
+    </div>
+  </div>
+
+  <div id="arxivRescanModalBg" class="modalBg">
+    <div class="modal">
+      <h3>Administrator · arXiv ingest</h3>
+      <p class="muted" style="margin:0 0 12px;font-size:13px;line-height:1.45">Pull extra arXiv results for a <strong>submitted-date window</strong>. Requests are paced, retried on 429/5xx, and then flow through dedup → keyword → profile analysis.</p>
+      <div class="row toolbar">
+        <label class="muted" style="display:grid;gap:6px;font-size:12px;">Since (browser local)<br /><input id="rescanSince" type="datetime-local" autocomplete="off" /></label>
+        <label class="muted" style="display:grid;gap:6px;font-size:12px;">Until<br /><input id="rescanUntil" type="datetime-local" autocomplete="off" /></label>
+      </div>
+      <div class="row toolbar">
+        <label class="muted" style="display:grid;gap:6px;flex:1;min-width:220px;font-size:12px;">Inner search (arXiv query syntax)<br /><input id="rescanQuery" type="text" autocomplete="off" placeholder="cat:cs.GR" style="width:100%" /></label>
+      </div>
+      <div class="row toolbar">
+        <button type="button" id="arxivRescanBtn">Run rescan</button>
+        <button type="button" id="closeArxivRescanModalBtn">Close</button>
+      </div>
+      <div id="arxivRescanStatus" class="muted"></div>
+    </div>
+  </div>
+
 <script>
+const DEFAULT_PROFILE_LLM_PROMPT = `You are a strict classifier for this profile. Given title and abstract, respond with JSON only: {"relevant":true} when clearly relevant, otherwise {"relevant":false}.`;
+
 const authView = document.getElementById("authView");
 const candidateView = document.getElementById("candidateView");
 const relevantView = document.getElementById("relevantView");
 const publicView = document.getElementById("publicView");
 const myProfilesView = document.getElementById("myProfilesView");
 const adminMetricsFilter = document.getElementById("adminMetricsFilter");
+const openArxivRescanModalBtn = document.getElementById("openArxivRescanModalBtn");
 const avatarBtn = document.getElementById("avatarBtn");
 const userDropdown = document.getElementById("userDropdown");
 const menuWrap = document.getElementById("menuWrap");
@@ -648,9 +736,40 @@ const navSignIn = document.getElementById("navSignIn");
 
 let auth = { authenticated: false, user: null, csrfToken: "" };
 let profiles = [];
+let profileEntries = [];
 let activeProfileId = null;
+let publicProfileUsername = null;
+let publicProfileSlug = null;
 let pendingRelevantPaper = null;
 let dropdownOpen = false;
+let candidateAutoTimer = null;
+let candidateRefreshInFlight = false;
+let candidateLastSignature = "";
+const CANDIDATE_AUTO_REFRESH_MS = 6000;
+
+function isCandidateFeedVisible() {
+  return !candidateView.classList.contains("hidden");
+}
+
+function stopCandidateAutoRefresh() {
+  if (candidateAutoTimer) {
+    clearInterval(candidateAutoTimer);
+    candidateAutoTimer = null;
+  }
+}
+
+function startCandidateAutoRefresh() {
+  stopCandidateAutoRefresh();
+  if (!auth.authenticated || !activeProfileId || !isCandidateFeedVisible()) return;
+  candidateAutoTimer = setInterval(async () => {
+    if (candidateRefreshInFlight) return;
+    if (document.hidden) return;
+    if (!auth.authenticated || !activeProfileId || !isCandidateFeedVisible()) return;
+    try {
+      await refreshCandidateFeed("", { silent: true });
+    } catch (_) {}
+  }, CANDIDATE_AUTO_REFRESH_MS);
+}
 
 function setDropdownOpen(open) {
   dropdownOpen = open;
@@ -663,7 +782,7 @@ function updateAuthChrome() {
   document.querySelectorAll(".auth-only").forEach(el => el.classList.toggle("hidden", !authed));
   document.querySelectorAll(".guest-only").forEach(el => el.classList.toggle("hidden", authed));
   adminMetricsFilter.classList.toggle("hidden", !(authed && auth.user && auth.user.isAdmin));
-  document.getElementById("adminArxivPanel").classList.toggle("hidden", !(authed && auth.user && auth.user.isAdmin));
+  openArxivRescanModalBtn.classList.toggle("hidden", !(authed && auth.user && auth.user.isAdmin));
 
   const u = authed ? (auth.user && auth.user.username) : "";
   if (authed && u) {
@@ -709,7 +828,7 @@ function renderUserDropdown() {
     empty.type = "button";
     empty.className = "dropdown-item";
     empty.innerHTML = `No profiles yet <small>Create one in settings</small>`;
-    empty.onclick = () => { setDropdownOpen(false); showView("profiles"); };
+    empty.onclick = () => { setDropdownOpen(false); openProfileSettingsView(); };
     userDropdown.append(empty);
   } else {
     for (const p of profiles) {
@@ -727,8 +846,11 @@ function renderUserDropdown() {
         if (document.getElementById("candidateView").classList.contains("hidden")) {
           await reloadRelevant().catch(() => {});
         } else {
-          await reloadCandidates();
+          await refreshCandidateFeed();
           await reloadRelevant().catch(() => {});
+        }
+        if (!myProfilesView.classList.contains("hidden")) {
+          fillCurrentProfileEditor();
         }
       };
       userDropdown.append(btn);
@@ -746,7 +868,7 @@ function renderUserDropdown() {
   profBtn.type = "button";
   profBtn.className = "dropdown-item";
   profBtn.textContent = "Profile settings";
-  profBtn.onclick = () => { setDropdownOpen(false); showView("profiles"); };
+  profBtn.onclick = () => { setDropdownOpen(false); openProfileSettingsView(); };
 
   const out = document.createElement("button");
   out.type = "button";
@@ -757,7 +879,10 @@ function renderUserDropdown() {
     try { await api("/api/auth/logout", { method: "POST", body: "{}" }); } catch (_) {}
     auth = { authenticated: false, user: null, csrfToken: "" };
     profiles = [];
+    profileEntries = [];
     activeProfileId = null;
+    candidateLastSignature = "";
+    stopCandidateAutoRefresh();
     updateAuthChrome();
     renderUserDropdown();
     showView("explore");
@@ -777,6 +902,7 @@ function setNavActive(route) {
 
 function showView(name) {
   const route = name === "public" || name === "explore" ? "explore" : name === "candidates" ? "feed" : name;
+  if (route === "explore") showPublicExploreBrowse();
   authView.classList.toggle("hidden", route !== "auth");
   candidateView.classList.toggle("hidden", route !== "feed");
   relevantView.classList.toggle("hidden", route !== "relevant");
@@ -796,6 +922,8 @@ function showView(name) {
     highlight = "explore";
   }
   setNavActive(highlight);
+  if (route === "feed" && auth.authenticated) startCandidateAutoRefresh();
+  else stopCandidateAutoRefresh();
 }
 
 async function api(url, opts = {}) {
@@ -818,9 +946,62 @@ function resetCreateProfileForm() {
   }
 }
 
+function applyProfilesMEResponse(data) {
+  profileEntries = Array.isArray(data.items) ? data.items : [];
+  profiles = profileEntries.map(x => x.profile);
+}
+
+function formatSourcesLines(sources) {
+  if (!sources || !sources.length) return "";
+  return sources.filter(s => s && s.enabled !== false && String(s.sourceValue || "").trim())
+    .map(s => `${String(s.sourceType || "").trim()}:${String(s.sourceValue || "").trim()}`)
+    .join("\n");
+}
+
+function fillCurrentProfileEditor() {
+  const hint = document.getElementById("currentProfileHint");
+  const editor = document.getElementById("currentProfileEditor");
+  if (!profiles.length || !activeProfileId) {
+    hint.textContent = "Create a profile below, then choose it from the account menu.";
+    editor.classList.add("hidden");
+    return;
+  }
+  const row = profileEntries.find(x => Number(x.profile.id) === Number(activeProfileId));
+  if (!row || !row.profile) {
+    hint.textContent = "Could not load this profile — open settings again or refresh.";
+    editor.classList.add("hidden");
+    return;
+  }
+  hint.textContent = "";
+  editor.classList.remove("hidden");
+  const p = row.profile;
+  const cfg = row.config || {};
+  document.getElementById("editProfileSlugDisplay").textContent = p.slug || "";
+  document.getElementById("editProfileName").value = p.name || "";
+  document.getElementById("editProfileVisibility").value = p.visibility || "private";
+  document.getElementById("editProfileDescription").value = p.description || "";
+  document.getElementById("editProfilePos").value = (cfg.positiveKeywords || []).join("\n");
+  document.getElementById("editProfileNeg").value = (cfg.negativeTitleKeywords || []).join("\n");
+  document.getElementById("editProfilePrompt").value = (cfg.llmPrompt && cfg.llmPrompt.trim()) ? cfg.llmPrompt : DEFAULT_PROFILE_LLM_PROMPT;
+  document.getElementById("editProfileSources").value = formatSourcesLines(cfg.sources);
+}
+
+async function openProfileSettingsView() {
+  showView("profiles");
+  document.getElementById("saveCurrentProfileStatus").textContent = "";
+  if (!auth.authenticated) return;
+  try {
+    const data = await api("/api/profiles/me");
+    applyProfilesMEResponse(data);
+    renderUserDropdown();
+  } catch (_) {}
+  fillCurrentProfileEditor();
+}
+
 async function refreshAuth() {
   const me = await api("/api/auth/me");
   auth = me || { authenticated: false };
+  if (!auth.authenticated) stopCandidateAutoRefresh();
   updateAuthChrome();
   renderUserDropdown();
   if (auth.authenticated) await reloadProfiles();
@@ -828,18 +1009,22 @@ async function refreshAuth() {
 
 async function reloadProfiles() {
   const data = await api("/api/profiles/me");
-  profiles = (data.items || []).map(x => x.profile);
+  applyProfilesMEResponse(data);
   if (profiles.length === 0) {
     activeProfileId = null;
+    candidateLastSignature = "";
+    stopCandidateAutoRefresh();
+    try { localStorage.removeItem("activeProfileId"); } catch (_) {}
     renderUserDropdown();
     return;
   }
   const saved = localStorage.getItem("activeProfileId");
   const found = profiles.find(p => String(p.id) === String(saved)) || profiles[0];
   activeProfileId = found.id;
+  candidateLastSignature = "";
   await touchProfileAccess(activeProfileId);
   renderUserDropdown();
-  await reloadCandidates();
+  await refreshCandidateFeed();
   await reloadRelevant().catch(() => {});
 }
 
@@ -848,7 +1033,7 @@ async function touchProfileAccess(profileId) {
   await api(`/api/profiles/${profileId}/access`, { method: "POST", body: "{}" });
   localStorage.setItem("activeProfileId", String(profileId));
   const data = await api("/api/profiles/me");
-  profiles = (data.items || []).map(x => x.profile);
+  applyProfilesMEResponse(data);
   renderUserDropdown();
 }
 
@@ -870,9 +1055,9 @@ function initArxivRescanDefaults() {
 }
 
 navExplore.onclick = () => showView("explore");
-navFeed.onclick = async () => { initArxivRescanDefaults(); showView("candidates"); await reloadCandidates(); };
+navFeed.onclick = async () => { initArxivRescanDefaults(); showView("candidates"); await refreshCandidateFeed(); };
 navRelevant.onclick = async () => { showView("relevant"); await reloadRelevant(); };
-navProfiles.onclick = () => showView("profiles");
+navProfiles.onclick = () => { openProfileSettingsView(); };
 navSignIn.onclick = () => showView("auth");
 
 document.getElementById("brandLink").onclick = (e) => {
@@ -890,6 +1075,11 @@ document.addEventListener("click", () => setDropdownOpen(false));
 menuWrap.addEventListener("click", (e) => e.stopPropagation());
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") setDropdownOpen(false);
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && isCandidateFeedVisible()) {
+    refreshCandidateFeed("", { silent: true }).catch(() => {});
+  }
 });
 
 document.getElementById("regBtn").onclick = async () => {
@@ -936,8 +1126,7 @@ document.getElementById("createProfileBtn").onclick = async () => {
     config: {
       positiveKeywords: lines(document.getElementById("newProfilePos").value),
       negativeTitleKeywords: lines(document.getElementById("newProfileNeg").value),
-      llmPrompt: (document.getElementById("newProfilePrompt").value || "").trim() ||
-        `You are a strict classifier for this profile. Given title and abstract, respond with JSON only: {"relevant":true} when clearly relevant, otherwise {"relevant":false}.`,
+      llmPrompt: (document.getElementById("newProfilePrompt").value || "").trim() || DEFAULT_PROFILE_LLM_PROMPT,
       sources: parseSources(document.getElementById("newProfileSources").value)
     }
   };
@@ -953,8 +1142,42 @@ document.getElementById("createProfileBtn").onclick = async () => {
   } catch (e) { status.textContent = `Failed: ${e.message}`; }
 };
 
-document.getElementById("reloadCandidatesBtn").onclick = reloadCandidates;
-adminMetricsFilter.onchange = reloadCandidates;
+document.getElementById("saveCurrentProfileBtn").onclick = async () => {
+  const st = document.getElementById("saveCurrentProfileStatus");
+  if (!activeProfileId) { st.textContent = "No profile selected."; return; }
+  st.textContent = "Saving…";
+  const payload = {
+    name: document.getElementById("editProfileName").value.trim(),
+    description: document.getElementById("editProfileDescription").value.trim(),
+    visibility: document.getElementById("editProfileVisibility").value,
+    config: {
+      positiveKeywords: lines(document.getElementById("editProfilePos").value),
+      negativeTitleKeywords: lines(document.getElementById("editProfileNeg").value),
+      llmPrompt: (document.getElementById("editProfilePrompt").value || "").trim() || DEFAULT_PROFILE_LLM_PROMPT,
+      sources: parseSources(document.getElementById("editProfileSources").value)
+    }
+  };
+  if (!payload.name) {
+    st.textContent = "Display name required.";
+    return;
+  }
+  try {
+    const data = await api(`/api/profiles/${activeProfileId}`, { method: "PATCH", body: JSON.stringify(payload) });
+    const q = data.analysisBackfillQueued;
+    st.textContent = (q != null && Number(q) > 0) ? `Saved. Queued ${q} profile_analyze job(s).` : "Saved.";
+    await reloadProfiles().catch(() => {});
+    fillCurrentProfileEditor();
+    await refreshCandidateFeed().catch(() => {});
+  } catch (e) {
+    st.textContent = `Failed: ${e.message}`;
+  }
+};
+
+document.getElementById("updateCandidatesBtn").onclick = reloadCandidatePipeline;
+adminMetricsFilter.onchange = () => {
+  candidateLastSignature = "";
+  refreshCandidateFeed();
+};
 
 document.getElementById("arxivRescanBtn").onclick = async () => {
   const el = document.getElementById("arxivRescanStatus");
@@ -963,55 +1186,108 @@ document.getElementById("arxivRescanBtn").onclick = async () => {
     const sinceEl = document.getElementById("rescanSince");
     const untilEl = document.getElementById("rescanUntil");
     const payload = { innerQuery: (document.getElementById("rescanQuery").value || "").trim() };
+    if (activeProfileId) payload.profileId = Number(activeProfileId);
     if ((sinceEl.value || "").trim()) payload.since = new Date(sinceEl.value).toISOString();
     if ((untilEl.value || "").trim()) payload.until = new Date(untilEl.value).toISOString();
     const data = await api("/api/admin/ingest/arxiv-rescan", { method: "POST", body: JSON.stringify(payload) });
-    el.textContent = `Sent ${data.recordsSentToDedup} records (pages ${data.pagesFetched}). Global keywords in the collector still filter ingestion.`;
-    await reloadCandidates();
+    el.textContent = `Sent ${data.recordsSentToDedup} records to dedup (pages ${data.pagesFetched}, query ${data.innerQuery}).`;
+    await refreshCandidateFeed();
   } catch (e) {
     el.textContent = `Failed: ${e.message}`;
   }
 };
 
-async function reloadCandidates() {
+/** Fetch current candidates from the API (already-analyzed rows). Metrics filter applies client query params only. */
+async function refreshCandidateFeed(backfillMeta, options = {}) {
+  const silent = !!options.silent;
   const status = document.getElementById("candidateStatus");
   const hintEl = document.getElementById("candidateMeta");
   const list = document.getElementById("candidateList");
-  list.innerHTML = "";
-  hintEl.textContent = "";
+  if (!silent) list.innerHTML = "";
+  const parts = [];
+  if (backfillMeta && typeof backfillMeta === "string") parts.push(backfillMeta);
+  hintEl.textContent = parts.join(" ");
   if (!auth.authenticated) { status.textContent = ""; return; }
   if (!activeProfileId) { status.textContent = "Create a profile in Profile settings."; return; }
-  status.textContent = "Loading…";
+  if (!silent) status.textContent = "Loading…";
   const mode = adminMetricsFilter.value || "all";
   const q = new URLSearchParams({
     keywordOnly: String(mode === "keyword"),
     llmRelevantOnly: String(mode === "llm"),
     wouldAutoOnly: String(mode === "auto")
   });
+  candidateRefreshInFlight = true;
   try {
     const data = await api(`/api/profiles/${activeProfileId}/analysis/candidates?` + q.toString());
-    if (data.meta && data.meta.hint) hintEl.textContent = String(data.meta.hint);
-    for (const p of (data.items || [])) {
-      const el = document.createElement("div");
-      el.className = "paper";
-      const url = p.url || "#";
-      el.innerHTML = `
-        <h3><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(p.title || ("Paper #" + p.paperId))}</a></h3>
-        <div class="muted">${esc(String(p.year || "?"))} · ${esc(p.firstAuthor || "?")}</div>
-        <div class="summary">${esc((p.abstract || "").slice(0, 3000))}</div>
-        <div class="row toolbar">
-          <button type="button" data-a="pdf">PDF</button>
-          <button type="button" data-a="relevant">Add to Relevant</button>
-        </div>
-        <div class="badge ${auth.user && auth.user.isAdmin ? "" : "hidden"}">
-          kw=${p.keywordPass} · llm=${p.llmRelevant === null || p.llmRelevant === undefined ? "n/a" : p.llmRelevant} · shadow=${Number(p.shadowScore || 0).toFixed(3)} · autoDL=${p.shadowWouldAutoDownload}
-        </div>
-      `;
-      el.querySelector("button[data-a='pdf']").onclick = () => window.open(buildPDFURL(url), "_blank");
-      el.querySelector("button[data-a='relevant']").onclick = () => openRelevantModal(p);
-      list.appendChild(el);
+    const metaParts = [...parts];
+    if (data.meta && data.meta.hint) metaParts.push(String(data.meta.hint));
+    hintEl.textContent = metaParts.filter(Boolean).join(" · ");
+    const items = data.items || [];
+    const signature = JSON.stringify(items.map(p => [
+      p.paperId, p.updatedAt, p.keywordPass, p.llmRelevant, p.shadowWouldAutoDownload
+    ]));
+    const shouldRender = !silent || signature !== candidateLastSignature;
+    if (shouldRender) {
+      list.innerHTML = "";
+      for (const p of items) {
+        const el = document.createElement("div");
+        el.className = "paper";
+        const url = p.url || "#";
+        el.innerHTML = `
+          <h3><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(p.title || ("Paper #" + p.paperId))}</a></h3>
+          <div class="muted">${esc(String(p.year || "?"))} · ${esc(p.firstAuthor || "?")}</div>
+          <div class="summary">${esc((p.abstract || "").slice(0, 3000))}</div>
+          <div class="row toolbar">
+            <button type="button" data-a="pdf">PDF</button>
+            <button type="button" data-a="verify">LLM Verify</button>
+            <button type="button" data-a="relevant">Add to Relevant</button>
+          </div>
+          <div class="badge ${auth.user && auth.user.isAdmin ? "" : "hidden"}">
+            kw=${p.keywordPass} · llm=${p.llmRelevant === null || p.llmRelevant === undefined ? "n/a" : p.llmRelevant} · shadow=${Number(p.shadowScore || 0).toFixed(3)} · autoDL=${p.shadowWouldAutoDownload}
+          </div>
+        `;
+        el.querySelector("button[data-a='pdf']").onclick = () => window.open(buildPDFURL(url), "_blank");
+        el.querySelector("button[data-a='verify']").onclick = async () => {
+          const status = document.getElementById("candidateStatus");
+          status.textContent = "Queueing LLM verify…";
+          try {
+            const resp = await api(`/api/profiles/${activeProfileId}/analysis/verify`, {
+              method: "POST",
+              body: JSON.stringify({ paperId: p.paperId })
+            });
+            if (resp.queued) status.textContent = "LLM verify queued.";
+            else status.textContent = "LLM verify already pending/running.";
+          } catch (e) {
+            status.textContent = `LLM verify failed: ${e.message}`;
+          }
+        };
+        el.querySelector("button[data-a='relevant']").onclick = () => openRelevantModal(p);
+        list.appendChild(el);
+      }
+      candidateLastSignature = signature;
     }
-    status.textContent = `${data.items ? data.items.length : 0} candidates`;
+    const n = items.length;
+    status.textContent = `${n} candidate${n === 1 ? "" : "s"} · auto-refresh every ${Math.round(CANDIDATE_AUTO_REFRESH_MS / 1000)}s`;
+  } catch (e) {
+    status.textContent = `Failed: ${e.message}`;
+  } finally {
+    candidateRefreshInFlight = false;
+  }
+}
+
+/** Enqueue profile_analyze jobs (worker pipeline), then refresh the list. See docs/filtering-strategy.md and docs/implementation.md. */
+async function reloadCandidatePipeline() {
+  const status = document.getElementById("candidateStatus");
+  if (!auth.authenticated) { status.textContent = ""; return; }
+  if (!activeProfileId) { status.textContent = "Create a profile in Profile settings."; return; }
+  status.textContent = "Queueing analysis jobs…";
+  try {
+    const bf = await api(`/api/profiles/${activeProfileId}/analysis/backfill`, { method: "POST", body: "{}" });
+    const n = bf.queued != null ? Number(bf.queued) : 0;
+    const msg = n > 0
+      ? `Queued ${n} profile_analyze job(s). The worker fills profile_paper_analysis; refresh again after it runs.`
+      : `No new jobs queued (matching papers already analyzed or already pending/running).`;
+    await refreshCandidateFeed(msg);
   } catch (e) {
     status.textContent = `Failed: ${e.message}`;
   }
@@ -1048,6 +1324,72 @@ async function reloadRelevant() {
   }
 }
 
+function showPublicExploreBrowse() {
+  publicProfileUsername = null;
+  publicProfileSlug = null;
+  const browse = document.getElementById("publicExploreBrowse");
+  const detail = document.getElementById("publicProfileDetail");
+  const st = document.getElementById("publicProfileStatus");
+  if (st) st.textContent = "";
+  if (browse) browse.classList.remove("hidden");
+  if (detail) detail.classList.add("hidden");
+}
+
+async function openPublicProfile(username, slug) {
+  publicProfileUsername = username;
+  publicProfileSlug = slug;
+  document.getElementById("publicExploreBrowse").classList.add("hidden");
+  document.getElementById("publicProfileDetail").classList.remove("hidden");
+  document.getElementById("publicProfileTagFilter").value = "";
+  await reloadPublicProfilePapers();
+}
+
+async function reloadPublicProfilePapers() {
+  const list = document.getElementById("publicProfilePapersList");
+  const status = document.getElementById("publicProfileStatus");
+  list.innerHTML = "";
+  if (!publicProfileUsername || !publicProfileSlug) return;
+  status.textContent = "Loading…";
+  try {
+    const tag = document.getElementById("publicProfileTagFilter").value.trim();
+    const qs = new URLSearchParams();
+    if (tag) qs.set("tag", tag);
+    const suffix = qs.toString() ? "?" + qs.toString() : "";
+    const data = await api(`/api/public/u/${encodeURIComponent(publicProfileUsername)}/${encodeURIComponent(publicProfileSlug)}${suffix}`);
+    const prof = data.profile || {};
+    document.getElementById("publicProfileTitle").textContent = prof.name || "Public profile";
+    document.getElementById("publicProfileMeta").textContent =
+      `${prof.username || publicProfileUsername} · ${prof.slug || publicProfileSlug}`;
+    const descEl = document.getElementById("publicProfileDesc");
+    const desc = (prof.description || "").trim();
+    descEl.textContent = desc;
+    descEl.classList.toggle("hidden", !desc);
+    const items = data.items || [];
+    if (!items.length) {
+      status.textContent = "No papers in this list yet.";
+      return;
+    }
+    status.textContent = `${items.length} paper${items.length === 1 ? "" : "s"}`;
+    for (const p of items) {
+      const el = document.createElement("div");
+      el.className = "paper";
+      el.innerHTML = `
+        <h3><a href="${esc(p.url || "#")}" target="_blank" rel="noopener">${esc(p.title)}</a></h3>
+        <div class="summary">${esc((p.abstract || "").slice(0, 1200))}</div>
+        <div class="muted">${esc(p.note || "")}</div>
+        <div class="tags">${(p.tags || []).map(t => "#" + esc(t)).join(" ")}</div>
+        <div class="row toolbar">
+          <button type="button" data-a="pdf">PDF</button>
+        </div>
+      `;
+      el.querySelector("button[data-a='pdf']").onclick = () => window.open(`/api/public/papers/${p.id}/pdf`, "_blank");
+      list.appendChild(el);
+    }
+  } catch (e) {
+    status.textContent = `Failed to load: ${e.message}`;
+  }
+}
+
 async function reloadPublicProfiles() {
   const q = document.getElementById("publicSearchQ").value.trim();
   const data = await api(`/api/public/profiles?q=${encodeURIComponent(q)}`);
@@ -1056,22 +1398,29 @@ async function reloadPublicProfiles() {
   for (const p of (data.items || [])) {
     const el = document.createElement("article");
     el.className = "card explore-card";
-    const href = `/api/public/u/${encodeURIComponent(p.username)}/${encodeURIComponent(p.slug)}`;
     const desc = (p.description || "").trim();
     const descBlock = desc ? `<p class="explore-desc">${esc(desc)}</p>` : "";
     el.innerHTML = `
-      <a class="explore-card-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">
+      <button type="button" class="explore-card-link" aria-label="View papers for ${esc(p.name)}">
         <h3>${esc(p.name)}</h3>
         <p class="explore-meta">${esc(p.username)} / ${esc(p.slug)}</p>
         ${descBlock}
-      </a>
+      </button>
     `;
+    const user = p.username;
+    const slug = p.slug;
+    el.querySelector(".explore-card-link").onclick = () => openPublicProfile(user, slug);
     list.appendChild(el);
   }
 }
 document.getElementById("publicSearchBtn").onclick = reloadPublicProfiles;
+document.getElementById("publicProfileBackBtn").onclick = showPublicExploreBrowse;
+document.getElementById("publicProfileReloadBtn").onclick = reloadPublicProfilePapers;
+document.getElementById("publicProfileTagFilter").onchange = reloadPublicProfilePapers;
 
 const modalBg = document.getElementById("relevantModalBg");
+const manualPaperModalBg = document.getElementById("manualPaperModalBg");
+const arxivRescanModalBg = document.getElementById("arxivRescanModalBg");
 function openRelevantModal(paper) {
   pendingRelevantPaper = paper;
   document.getElementById("relevantModalTitle").textContent = `Add to Relevant: ${paper.title || ("Paper #" + paper.paperId)}`;
@@ -1081,6 +1430,21 @@ function openRelevantModal(paper) {
   modalBg.style.display = "flex";
 }
 document.getElementById("cancelRelevantBtn").onclick = () => { modalBg.style.display = "none"; };
+document.getElementById("addRelevantPaperBtn").onclick = () => {
+  if (!activeProfileId) return;
+  for (const id of ["manualPaperURL","manualPaperPDFURL","manualPaperArxivID","manualPaperTitle","manualPaperFirstAuthor","manualPaperYear","manualPaperAbstract","manualPaperTags","manualPaperNote"]) {
+    document.getElementById(id).value = "";
+  }
+  document.getElementById("manualPaperStatus").textContent = "";
+  manualPaperModalBg.style.display = "flex";
+};
+document.getElementById("cancelManualPaperBtn").onclick = () => { manualPaperModalBg.style.display = "none"; };
+openArxivRescanModalBtn.onclick = () => {
+  initArxivRescanDefaults();
+  document.getElementById("arxivRescanStatus").textContent = "";
+  arxivRescanModalBg.style.display = "flex";
+};
+document.getElementById("closeArxivRescanModalBtn").onclick = () => { arxivRescanModalBg.style.display = "none"; };
 document.getElementById("confirmRelevantBtn").onclick = async () => {
   if (!pendingRelevantPaper || !activeProfileId) return;
   const tags = (document.getElementById("relevantTagsInput").value || "").split(",").map(v => v.trim()).filter(Boolean);
@@ -1099,6 +1463,49 @@ document.getElementById("confirmRelevantBtn").onclick = async () => {
     status.textContent = `Failed: ${e.message}`;
   }
 };
+document.getElementById("confirmManualPaperBtn").onclick = async () => {
+  if (!activeProfileId) return;
+  const status = document.getElementById("manualPaperStatus");
+  const title = (document.getElementById("manualPaperTitle").value || "").trim();
+  const abstract = (document.getElementById("manualPaperAbstract").value || "").trim();
+  if (!title || !abstract) {
+    status.textContent = "Title and abstract are required.";
+    return;
+  }
+  const yearRaw = (document.getElementById("manualPaperYear").value || "").trim();
+  let year = null;
+  if (yearRaw) {
+    const n = Number(yearRaw);
+    if (Number.isFinite(n) && n > 1900 && n < 3000) year = Math.trunc(n);
+  }
+  const payload = {
+    url: (document.getElementById("manualPaperURL").value || "").trim(),
+    pdfUrl: (document.getElementById("manualPaperPDFURL").value || "").trim(),
+    arxivId: (document.getElementById("manualPaperArxivID").value || "").trim(),
+    title,
+    abstract,
+    firstAuthor: (document.getElementById("manualPaperFirstAuthor").value || "").trim(),
+    note: (document.getElementById("manualPaperNote").value || "").trim(),
+    tags: (document.getElementById("manualPaperTags").value || "").split(",").map(v => v.trim()).filter(Boolean),
+  };
+  if (year !== null) payload.year = year;
+  status.textContent = "Adding…";
+  try {
+    await api(`/api/profiles/${activeProfileId}/likes/manual`, { method: "POST", body: JSON.stringify(payload) });
+    status.textContent = "Added.";
+    manualPaperModalBg.style.display = "none";
+    await reloadRelevant();
+    await refreshCandidateFeed("", { silent: true }).catch(() => {});
+  } catch (e) {
+    status.textContent = `Failed: ${e.message}`;
+  }
+};
+arxivRescanModalBg.addEventListener("click", (e) => {
+  if (e.target === arxivRescanModalBg) arxivRescanModalBg.style.display = "none";
+});
+manualPaperModalBg.addEventListener("click", (e) => {
+  if (e.target === manualPaperModalBg) manualPaperModalBg.style.display = "none";
+});
 
 function parseSources(s) {
   const out = [];
@@ -1106,11 +1513,18 @@ function parseSources(s) {
     const i = line.indexOf(":");
     if (i <= 0) continue;
     const t = line.slice(0, i).trim();
-    const v = line.slice(i + 1).trim();
+    const v = normalizeSourceValue(t, line.slice(i + 1).trim());
     if (!v) continue;
     out.push({ sourceType: t, sourceValue: v, enabled: true });
   }
   return out;
+}
+function normalizeSourceValue(sourceType, value) {
+  const t = String(sourceType || "").trim().toLowerCase();
+  let v = String(value || "").trim();
+  if (!v) return "";
+  if (t === "rss" && v.startsWith("//")) v = "https:" + v;
+  return v;
 }
 function lines(s) { return String(s || "").split("\n").map(v => v.trim()).filter(Boolean); }
 function esc(s) {

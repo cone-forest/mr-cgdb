@@ -93,7 +93,7 @@ func UpsertProfileLike(ctx context.Context, p *pgxpool.Pool, profileID, ownerUse
 	}
 	_, err = p.Exec(ctx, `
 		INSERT INTO paper_files (paper_id, source_url, status, updated_at)
-		SELECT id, COALESCE(url, CASE WHEN arxiv_id IS NOT NULL THEN 'https://arxiv.org/pdf/' || arxiv_id || '.pdf' ELSE '' END), 'queued', now()
+		SELECT id, COALESCE(pdf_url, url, CASE WHEN arxiv_id IS NOT NULL THEN 'https://arxiv.org/pdf/' || arxiv_id || '.pdf' ELSE '' END), 'queued', now()
 		FROM papers WHERE id = $1
 		ON CONFLICT (paper_id) DO UPDATE
 		SET status = CASE WHEN paper_files.status = 'ready' THEN 'ready' ELSE 'queued' END,
@@ -233,6 +233,27 @@ func FailJob(ctx context.Context, p *pgxpool.Pool, jobID int64, reason string) e
 func RetryJob(ctx context.Context, p *pgxpool.Pool, jobID int64) error {
 	_, err := p.Exec(ctx, `UPDATE jobs SET status='pending', updated_at=now(), finished_at=NULL WHERE id=$1`, jobID)
 	return err
+}
+
+func EnqueueProfileLLMVerifyJob(ctx context.Context, p *pgxpool.Pool, profileID, paperID int64) (bool, error) {
+	tag, err := p.Exec(ctx, `
+		INSERT INTO jobs (kind, status, payload)
+		SELECT 'profile_llm_verify', 'pending', jsonb_build_object('profileId', $1::bigint, 'paperId', $2::bigint)
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM jobs j
+			WHERE j.kind = 'profile_llm_verify'
+			  AND j.status IN ('pending', 'running')
+			  AND COALESCE(j.payload->>'profileId', '') <> ''
+			  AND COALESCE(j.payload->>'paperId', '') <> ''
+			  AND (j.payload->>'profileId')::bigint = $1::bigint
+			  AND (j.payload->>'paperId')::bigint = $2::bigint
+		)
+	`, profileID, paperID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func GetJobByID(ctx context.Context, p *pgxpool.Pool, jobID int64) (*Job, error) {

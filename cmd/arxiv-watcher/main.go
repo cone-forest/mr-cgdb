@@ -80,7 +80,12 @@ func main() {
 			lastID = &empty
 		}
 
-		entries, err := arxiv.SearchPage(ctx, q)
+		var entries []arxiv.Entry
+		err = store.WithArxivRequestLock(ctx, pool, func(lockCtx context.Context) error {
+			var e error
+			entries, e = arxiv.SearchPage(lockCtx, q)
+			return e
+		})
 		if err != nil {
 			log.Printf("arxiv query: %v", err)
 			return
