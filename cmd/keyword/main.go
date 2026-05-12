@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"mr-cgdb/internal/identity"
 	"mr-cgdb/internal/keywords"
@@ -46,42 +45,6 @@ func main() {
 	}
 	defer pool.Close()
 
-	var cfgMu sync.RWMutex
-	activeMatcher := defaultMatcher
-	activeNegTitleKeywords := negTitleKeywords
-	refreshConfig := func() {
-		cfg, err := store.GetSystemConfig(ctx, pool)
-		if err != nil {
-			log.Printf("keyword config refresh failed: %v", err)
-			return
-		}
-		cfgMu.Lock()
-		if len(cfg.PositiveKeywords) > 0 {
-			activeMatcher = keywords.New(cfg.PositiveKeywords)
-		} else {
-			activeMatcher = defaultMatcher
-		}
-		if len(cfg.NegativeTitleKeywords) > 0 {
-			activeNegTitleKeywords = cfg.NegativeTitleKeywords
-		} else {
-			activeNegTitleKeywords = negTitleKeywords
-		}
-		cfgMu.Unlock()
-	}
-	refreshConfig()
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				refreshConfig()
-			}
-		}
-	}()
-
 	var pMu sync.Mutex
 	var pconn net.Conn
 	dialP := func() error {
@@ -112,15 +75,11 @@ func main() {
 			if err := wire.ReadFrame(c, &it); err != nil {
 				return
 			}
-			cfgMu.RLock()
-			m := activeMatcher
-			neg := append([]string(nil), activeNegTitleKeywords...)
-			cfgMu.RUnlock()
-			if titleHasAny(it.Title, neg) {
+			if titleHasAny(it.Title, negTitleKeywords) {
 				continue
 			}
 			blob := strings.ToLower(it.Title) + " " + strings.ToLower(it.Abstract)
-			if !m.MatchText(blob) {
+			if !defaultMatcher.MatchText(blob) {
 				continue
 			}
 			wkstr := identity.WeakKey(it.Title, it.Year, it.Authors)
@@ -132,6 +91,37 @@ func main() {
 			if err != nil {
 				log.Printf("insert: %v", err)
 				continue
+			}
+			// Phase 2: automatically fan out profile analysis jobs by source subscription.
+			switch {
+			case it.Source == "arxiv" || it.ArxivID != nil:
+				profileIDs, e := store.ListProfileIDsForArxivRouting(ctx, pool)
+				if e != nil {
+					log.Printf("list arxiv-routed profiles: %v", e)
+				} else {
+					for _, pid := range profileIDs {
+						if e := store.EnqueueProfileAnalyzeJob(ctx, pool, pid, id); e != nil {
+							log.Printf("enqueue profile analyze pid=%d paper=%d: %v", pid, id, e)
+						}
+					}
+				}
+			case it.FeedID != "":
+				feedURL, e := store.ResolveRSSFeedURL(ctx, pool, it.FeedID)
+				if e != nil {
+					log.Printf("resolve rss feed url %s: %v", it.FeedID, e)
+				}
+				if feedURL != "" {
+					profileIDs, e := store.ListProfileIDsForRSSRouting(ctx, pool, feedURL)
+					if e != nil {
+						log.Printf("list rss-routed profiles: %v", e)
+					} else {
+						for _, pid := range profileIDs {
+							if e := store.EnqueueProfileAnalyzeJob(ctx, pool, pid, id); e != nil {
+								log.Printf("enqueue profile analyze pid=%d paper=%d: %v", pid, id, e)
+							}
+						}
+					}
+				}
 			}
 			job := model.PipelineWork{PaperID: id}
 			if err := dialP(); err != nil {

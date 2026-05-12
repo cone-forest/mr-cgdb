@@ -27,6 +27,7 @@ services:
   dedup:
     build: .
     command: ["/app/dedup"]
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,15 +35,21 @@ services:
       DATABASE_URL: postgres://papers:papers@postgres:5432/papers?sslmode=disable
       LISTEN: :9001
       KEYWORD_ADDR: keyword:9002
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9001"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   keyword:
     build: .
     command: ["/app/keyword"]
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
       dedup:
-        condition: service_started
+        condition: service_healthy
     environment:
       DATABASE_URL: postgres://papers:papers@postgres:5432/papers?sslmode=disable
       LISTEN: :9002
@@ -51,10 +58,16 @@ services:
       NEGATIVE_TITLE_KEYWORDS: gaussian,splatt
     volumes:
       - ./config:/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9002"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   pipeline:
     build: .
     command: ["/app/pipeline"]
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,15 +86,21 @@ services:
       SEEDS_NEGATIVE_FILE: /config/seeds_negative.txt
     volumes:
       - ./config:/config:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 9003"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   arxiv-watcher:
     build: .
     command: ["/app/arxiv-watcher"]
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
       dedup:
-        condition: service_started
+        condition: service_healthy
     environment:
       DATABASE_URL: postgres://papers:papers@postgres:5432/papers?sslmode=disable
       DEDUP_ADDR: dedup:9001
@@ -91,11 +110,12 @@ services:
   rss-watcher:
     build: .
     command: ["/app/rss-watcher"]
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
       dedup:
-        condition: service_started
+        condition: service_healthy
     environment:
       DATABASE_URL: postgres://papers:papers@postgres:5432/papers?sslmode=disable
       DEDUP_ADDR: dedup:9001
@@ -105,6 +125,7 @@ services:
   api:
     build: .
     command: ["/app/api"]
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -115,20 +136,29 @@ services:
     environment:
       DATABASE_URL: postgres://papers:papers@postgres:5432/papers?sslmode=disable
       LISTEN: :8080
-      PIPELINE_ADDR: pipeline:9003
-      DEDUP_ADDR: dedup:9001
-      ARXIV_SCAN_CATEGORY: cs.GR
-      SEEDS_NEGATIVE_FILE: /config/seeds_negative.txt
-      OLLAMA_BASE_URL: http://ollama:11434
-      CHAT_MODEL: llama3.2:1b
-      DEEP_VERIFY_MODEL: llama3.2:1b
-      DEEP_VERIFY_MAX_CHARS: "120000"
-      DEEP_VERIFY_MAX_BYTES: "100000000"
-      DEEP_VERIFY_CHUNK_CHARS: "4000"
-      DEEP_VERIFY_MAX_CHUNKS: "12"
+      PDF_STORAGE_DIR: /data/pdfs
+      PDF_MAX_SERVE_BYTES: "100000000"
+      PDF_RATE_LIMIT_PER_MIN: "60"
+      COOKIE_SECURE: "false"
     volumes:
       - ./config:/config
+      - pdfdata:/data
+
+  worker:
+    build: .
+    command: ["/app/worker"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://papers:papers@postgres:5432/papers?sslmode=disable
+      PDF_STORAGE_DIR: /data/pdfs
+      PDF_DOWNLOAD_MAX_BYTES: "200000000"
+    volumes:
+      - pdfdata:/data
 
 volumes:
   pgdata:
   ollama:
+  pdfdata:

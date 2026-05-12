@@ -6,513 +6,465 @@
   <title>mr-cgdb</title>
   <style>
     body { font-family: system-ui, sans-serif; margin: 0; background: #111; color: #eee; }
-    header { padding: 12px 16px; border-bottom: 1px solid #333; position: sticky; top: 0; background: #111; }
-    h1 { margin: 0; font-size: 20px; }
-    .tabs { margin-top: 8px; display: flex; gap: 8px; }
-    .feedsbar { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .feedsbar input { background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 6px 8px; min-width: 320px; }
-    .feeds-panel { margin-top: 8px; border: 1px solid #333; border-radius: 8px; padding: 10px; max-width: 900px; }
-    .feeds-panel ul { margin: 8px 0 0 20px; padding: 0; }
-    .scanbar { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .scanbar input { background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 6px 8px; }
-    .scan-status { color: #b7b7b7; font-size: 13px; }
-    button { background: #222; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
-    button.active { background: #2f4f7a; }
-    main { padding: 16px; }
-    .hidden { display: none; }
-    .window { border: 1px solid #333; border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
-    .window > .title { background: #1a1a1a; padding: 10px 12px; font-weight: 700; }
-    .paper { border-top: 1px solid #2a2a2a; padding: 10px 12px; }
+    header { padding: 10px 14px; border-bottom: 1px solid #333; position: sticky; top: 0; background: #111; z-index: 10; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .brand { font-weight: 700; font-size: 18px; margin-right: 8px; }
+    select, input, textarea, button { background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 7px 9px; }
+    button { cursor: pointer; background: #222; }
+    button:hover { background: #2a2a2a; }
+    main { padding: 14px; max-width: 1200px; }
+    .hidden { display: none !important; }
+    .panel { border: 1px solid #333; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+    .panel .title { background: #1a1a1a; padding: 10px 12px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; }
+    .panel .body { padding: 12px; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+    .muted { color: #b7b7b7; font-size: 13px; }
+    .list { display: grid; gap: 10px; }
+    .paper { border: 1px solid #2a2a2a; border-radius: 8px; padding: 10px; }
     .paper h3 { margin: 0 0 6px 0; font-size: 16px; }
     .paper h3 a { color: #9ec5ff; text-decoration: none; }
     .paper h3 a:hover { text-decoration: underline; }
-    .meta { color: #b7b7b7; font-size: 13px; margin-bottom: 8px; }
-    .summary { color: #ddd; white-space: pre-wrap; max-height: 180px; overflow: auto; margin-bottom: 8px; }
-    .actions { display: flex; gap: 8px; }
-    .deep-result { margin-top: 6px; color: #c7d9ff; font-size: 13px; }
-    .collapsed .summary, .collapsed .actions { display: none; }
-    .config-panel { border: 1px solid #333; border-radius: 8px; padding: 12px; max-width: 1000px; }
-    .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    .config-row { display: flex; flex-direction: column; gap: 6px; }
-    .config-row.full { grid-column: 1 / -1; }
-    .config-row input, .config-row textarea { background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 8px; }
-    .config-row textarea { min-height: 120px; resize: vertical; font-family: ui-monospace, monospace; font-size: 13px; }
-    .config-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    .muted { color: #b7b7b7; font-size: 13px; }
+    .summary { white-space: pre-wrap; max-height: 180px; overflow: auto; color: #ddd; margin: 8px 0; }
+    .tags { color: #9bd6ff; font-size: 12px; }
+    .badge { font-size: 12px; color: #c7d9ff; }
+    .modalBg { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; padding: 16px; }
+    .modal { width: min(680px, 100%); background: #121212; border: 1px solid #333; border-radius: 10px; padding: 12px; }
+    .modal textarea { width: 100%; min-height: 90px; }
+    .modal input { width: 100%; }
+    .status { color: #c7d9ff; font-size: 13px; }
+    #profileCreateBody textarea { width: 100%; min-height: 90px; }
+    #profileCreateBody input { min-width: 220px; }
   </style>
 </head>
 <body>
   <header>
-    <h1>Paper Router</h1>
-    <div class="tabs">
-      <button id="tabDigest" class="active">Digest</button>
-      <button id="tabPending">Pending</button>
-      <button id="tabConfig">Configuration</button>
-    </div>
-    <div class="scanbar">
-      <span>Scan arXiv range:</span>
-      <input id="scanFrom" type="date" />
-      <input id="scanTo" type="date" />
-      <button id="scanBtn">Scan</button>
-      <button id="clearBtn">Clear</button>
-      <span id="scanStatus" class="scan-status"></span>
-    </div>
-    <div class="feedsbar">
-      <button id="toggleFeedsBtn">Show RSS feeds</button>
-      <input id="newFeedUrl" type="url" placeholder="https://example.com/rss.xml" />
-      <button id="addFeedBtn">Add RSS feed</button>
-      <span id="feedStatus" class="scan-status"></span>
-    </div>
-    <div id="feedsPanel" class="feeds-panel hidden">
-      <strong>Configured RSS feeds</strong>
-      <ul id="feedsList"></ul>
-    </div>
+    <div class="brand">Paper Profiles</div>
+    <select id="profileSelect" class="hidden"></select>
+    <button id="candidateTabBtn" class="hidden">Candidate Papers</button>
+    <button id="relevantTabBtn" class="hidden">Relevant</button>
+    <button id="publicTabBtn">Public Profiles</button>
+    <button id="authTabBtn">Auth</button>
+    <button id="logoutBtn" class="hidden">Logout</button>
+    <span id="authState" class="status"></span>
   </header>
+
   <main>
-    <section id="digestView"></section>
-    <section id="pendingView" class="hidden"></section>
-    <section id="configView" class="hidden">
-      <div class="config-panel">
-        <div class="config-grid">
-          <div class="config-row">
-            <label for="cfgDomain">Domain</label>
-            <input id="cfgDomain" type="text" placeholder="computer graphics, robotics, biology..." />
+    <section id="authView">
+      <div class="panel">
+        <div class="title">Auth</div>
+        <div class="body">
+          <div class="row">
+            <input id="regUsername" placeholder="username" autocomplete="off" />
+            <input id="regPassword" type="password" placeholder="password (min 8 chars)" autocomplete="new-password" />
+            <button id="regBtn">Register</button>
           </div>
-          <div class="config-row">
-            <label for="cfgGenerateDomain">Generate from domain</label>
-            <input id="cfgGenerateDomain" type="text" placeholder="e.g. computational neuroscience" />
+          <div class="row">
+            <input id="loginUsername" placeholder="username" autocomplete="off" />
+            <input id="loginPassword" type="password" placeholder="password" autocomplete="current-password" />
+            <button id="loginBtn">Login</button>
           </div>
-          <div class="config-row full">
-            <label for="cfgPrompt">LLM system prompt</label>
-            <textarea id="cfgPrompt"></textarea>
-          </div>
-          <div class="config-row full">
-            <label for="cfgArxivQuery">arXiv query</label>
-            <textarea id="cfgArxivQuery"></textarea>
-            <span class="muted">Example: search_query=cat:cs.GR&sortBy=submittedDate&sortOrder=descending&start=0&max_results=200</span>
-          </div>
-          <div class="config-row">
-            <label for="cfgPosKeywords">Positive keywords (one per line)</label>
-            <textarea id="cfgPosKeywords"></textarea>
-          </div>
-          <div class="config-row">
-            <label for="cfgNegKeywords">Negative title keywords (one per line)</label>
-            <textarea id="cfgNegKeywords"></textarea>
-          </div>
-          <div class="config-row full">
-            <label for="cfgRssFeeds">RSS sources watched (one URL per line)</label>
-            <textarea id="cfgRssFeeds"></textarea>
-          </div>
+          <div id="authStatus" class="muted"></div>
         </div>
-        <div class="config-actions">
-          <button id="cfgGenerateBtn">Generate configuration</button>
-          <button id="cfgSaveBtn">Save configuration</button>
-          <span id="cfgStatus" class="scan-status"></span>
+      </div>
+    </section>
+
+    <section id="candidateView" class="hidden">
+      <div class="panel">
+        <div class="title">
+          <span>Candidate Papers</span>
+          <span class="row">
+            <button id="reloadCandidatesBtn">Reload</button>
+            <select id="adminMetricsFilter" class="hidden">
+              <option value="all">Metrics: All</option>
+              <option value="keyword">Metrics: Keyword Pass</option>
+              <option value="llm">Metrics: LLM Relevant</option>
+              <option value="auto">Metrics: Would Auto-Download</option>
+            </select>
+          </span>
+        </div>
+        <div class="body">
+          <div class="muted" id="candidateStatus"></div>
+          <div id="candidateList" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="relevantView" class="hidden">
+      <div class="panel">
+        <div class="title">Relevant Papers</div>
+        <div class="body">
+          <div class="row">
+            <input id="relevantTagFilter" placeholder="filter by tag" />
+            <button id="reloadRelevantBtn">Reload</button>
+          </div>
+          <div id="relevantList" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="publicView" class="hidden">
+      <div class="panel">
+        <div class="title">Public Profiles</div>
+        <div class="body">
+          <div class="row">
+            <input id="publicSearchQ" placeholder="search profiles" style="min-width: 320px;" />
+            <button id="publicSearchBtn">Search</button>
+          </div>
+          <div id="publicProfilesList" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="myProfilesView" class="hidden">
+      <div class="panel">
+        <div class="title">
+          <span>Create Profile</span>
+          <button id="toggleCreateProfileBtn">Show</button>
+        </div>
+        <div class="body hidden" id="profileCreateBody">
+          <div class="row">
+            <input id="newProfileSlug" autocomplete="off" placeholder="slug (immutable)" />
+            <input id="newProfileName" autocomplete="off" placeholder="display name" />
+            <select id="newProfileVisibility"><option value="private">private</option><option value="public">public</option></select>
+          </div>
+          <div class="row">
+            <button id="createProfileBtn">Create Profile</button>
+            <span id="createProfileStatus" class="status"></span>
+          </div>
+          <textarea id="newProfileDescription" autocomplete="off" placeholder="description"></textarea>
+          <textarea id="newProfilePos" autocomplete="off" placeholder="positive keywords (one per line)"></textarea>
+          <textarea id="newProfileNeg" autocomplete="off" placeholder="negative title keywords (one per line)"></textarea>
+          <textarea id="newProfilePrompt" autocomplete="off" placeholder="LLM prompt"></textarea>
+          <textarea id="newProfileSources" autocomplete="off" placeholder="sources, one per line: rss:https://... or arxiv_query:search_query=..."></textarea>
         </div>
       </div>
     </section>
   </main>
+
+  <div id="relevantModalBg" class="modalBg">
+    <div class="modal">
+      <h3 id="relevantModalTitle">Add to Relevant</h3>
+      <div class="row"><input id="relevantTagsInput" placeholder="tags comma-separated" /></div>
+      <div class="row"><textarea id="relevantNoteInput" placeholder="comment"></textarea></div>
+      <div class="row">
+        <button id="confirmRelevantBtn">Add to Relevant</button>
+        <button id="cancelRelevantBtn">Cancel</button>
+      </div>
+      <div id="relevantModalStatus" class="muted"></div>
+    </div>
+  </div>
+
 <script>
-const digestView = document.getElementById("digestView");
-const pendingView = document.getElementById("pendingView");
-const tabDigest = document.getElementById("tabDigest");
-const tabPending = document.getElementById("tabPending");
-const tabConfig = document.getElementById("tabConfig");
-const configView = document.getElementById("configView");
-const scanFrom = document.getElementById("scanFrom");
-const scanTo = document.getElementById("scanTo");
-const scanBtn = document.getElementById("scanBtn");
-const clearBtn = document.getElementById("clearBtn");
-const scanStatus = document.getElementById("scanStatus");
-const toggleFeedsBtn = document.getElementById("toggleFeedsBtn");
-const addFeedBtn = document.getElementById("addFeedBtn");
-const newFeedUrl = document.getElementById("newFeedUrl");
-const feedStatus = document.getElementById("feedStatus");
-const feedsPanel = document.getElementById("feedsPanel");
-const feedsList = document.getElementById("feedsList");
-const cfgDomain = document.getElementById("cfgDomain");
-const cfgGenerateDomain = document.getElementById("cfgGenerateDomain");
-const cfgPrompt = document.getElementById("cfgPrompt");
-const cfgArxivQuery = document.getElementById("cfgArxivQuery");
-const cfgPosKeywords = document.getElementById("cfgPosKeywords");
-const cfgNegKeywords = document.getElementById("cfgNegKeywords");
-const cfgRssFeeds = document.getElementById("cfgRssFeeds");
-const cfgGenerateBtn = document.getElementById("cfgGenerateBtn");
-const cfgSaveBtn = document.getElementById("cfgSaveBtn");
-const cfgStatus = document.getElementById("cfgStatus");
-let configLoaded = false;
-const collapsed = new Set(JSON.parse(localStorage.getItem("collapsedIrrelevant") || "[]"));
-const deepState = new Map(); // paperId -> { status: "idle|running|done|error", message: string }
-let deepVerifyInFlight = 0;
+const authState = document.getElementById("authState");
+const authView = document.getElementById("authView");
+const candidateView = document.getElementById("candidateView");
+const relevantView = document.getElementById("relevantView");
+const publicView = document.getElementById("publicView");
+const myProfilesView = document.getElementById("myProfilesView");
+const profileSelect = document.getElementById("profileSelect");
+const adminMetricsFilter = document.getElementById("adminMetricsFilter");
+let auth = { authenticated: false, user: null, csrfToken: "" };
+let profiles = [];
+let activeProfileId = null;
+let pendingRelevantPaper = null;
 
-tabDigest.onclick = () => showTab("digest");
-tabPending.onclick = () => showTab("pending");
-tabConfig.onclick = () => showTab("config");
+function showView(name) {
+  authView.classList.toggle("hidden", name !== "auth");
+  candidateView.classList.toggle("hidden", name !== "candidates");
+  relevantView.classList.toggle("hidden", name !== "relevant");
+  publicView.classList.toggle("hidden", name !== "public");
+  myProfilesView.classList.toggle("hidden", !auth.authenticated);
+}
 
-const today = new Date();
-const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-scanTo.value = toDateInput(today);
-scanFrom.value = toDateInput(weekAgo);
-scanBtn.onclick = async () => {
-  const from = scanFrom.value;
-  const to = scanTo.value;
-  if (!from || !to) {
-    scanStatus.textContent = "Select both dates.";
+async function api(url, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+  if (auth.authenticated && ["POST","PATCH","PUT","DELETE"].includes((opts.method || "GET").toUpperCase())) {
+    headers["X-CSRF-Token"] = auth.csrfToken || "";
+  }
+  const r = await fetch(url, { ...opts, headers });
+  const t = await r.text();
+  let d = {};
+  try { d = t ? JSON.parse(t) : {}; } catch (_) { d = { raw: t }; }
+  if (!r.ok) throw new Error(d.error || d.raw || r.statusText);
+  return d;
+}
+
+function resetCreateProfileForm() {
+  for (const id of ["newProfileSlug","newProfileName","newProfileDescription","newProfilePos","newProfileNeg","newProfilePrompt","newProfileSources"]) {
+    document.getElementById(id).value = "";
+  }
+}
+
+async function refreshAuth() {
+  const me = await api("/api/auth/me");
+  auth = me || { authenticated: false };
+  document.getElementById("logoutBtn").classList.toggle("hidden", !auth.authenticated);
+  document.getElementById("candidateTabBtn").classList.toggle("hidden", !auth.authenticated);
+  document.getElementById("relevantTabBtn").classList.toggle("hidden", !auth.authenticated);
+  profileSelect.classList.toggle("hidden", !auth.authenticated);
+  authState.textContent = auth.authenticated ? `Signed in as ${auth.user.username}` : "Not signed in";
+  adminMetricsFilter.classList.toggle("hidden", !(auth.authenticated && auth.user && auth.user.isAdmin));
+  if (auth.authenticated) await reloadProfiles();
+}
+
+async function reloadProfiles() {
+  const data = await api("/api/profiles/me");
+  profiles = (data.items || []).map(x => x.profile);
+  profileSelect.innerHTML = "";
+  for (const p of profiles) {
+    const o = document.createElement("option");
+    o.value = String(p.id);
+    o.textContent = `${p.name} (${p.visibility})`;
+    profileSelect.appendChild(o);
+  }
+  if (profiles.length === 0) {
+    activeProfileId = null;
     return;
   }
-  scanBtn.disabled = true;
-  scanStatus.textContent = "Scanning...";
-  try {
-    const res = await post("/api/scan/arxiv-range", { from, to });
-    scanStatus.textContent = `Done: fetched ${res.fetched}, forwarded ${res.forwarded}.`;
-    await reload();
-  } catch (e) {
-    scanStatus.textContent = `Scan failed: ${String(e.message || e)}`;
-  } finally {
-    scanBtn.disabled = false;
-  }
-};
-clearBtn.onclick = async () => {
-  const ok = window.confirm("Are you sure you want to clear all scanned papers and pending/digest data? RSS feed list will be kept.");
-  if (!ok) return;
-  clearBtn.disabled = true;
-  scanStatus.textContent = "Clearing data...";
-  try {
-    await post("/api/scan/clear", {});
-    scanStatus.textContent = "Scan data cleared.";
-    collapsed.clear();
-    saveCollapsed();
-    await reload();
-  } catch (e) {
-    scanStatus.textContent = `Clear failed: ${String(e.message || e)}`;
-  } finally {
-    clearBtn.disabled = false;
-  }
+  const saved = localStorage.getItem("activeProfileId");
+  const found = profiles.find(p => String(p.id) === String(saved)) || profiles[0];
+  profileSelect.value = String(found.id);
+  activeProfileId = found.id;
+  await touchProfileAccess(activeProfileId);
+  await reloadCandidates();
+  await reloadRelevant();
+}
+
+async function touchProfileAccess(profileId) {
+  if (!profileId) return;
+  await api(`/api/profiles/${profileId}/access`, { method: "POST", body: "{}" });
+  localStorage.setItem("activeProfileId", String(profileId));
+}
+
+profileSelect.onchange = async () => {
+  activeProfileId = Number(profileSelect.value || 0);
+  await touchProfileAccess(activeProfileId);
+  await reloadCandidates();
+  await reloadRelevant();
 };
 
-toggleFeedsBtn.onclick = async () => {
-  const hidden = feedsPanel.classList.toggle("hidden");
-  toggleFeedsBtn.textContent = hidden ? "Show RSS feeds" : "Hide RSS feeds";
-  if (!hidden) {
-    await reloadFeeds();
-  }
+document.getElementById("authTabBtn").onclick = () => showView("auth");
+document.getElementById("candidateTabBtn").onclick = async () => { showView("candidates"); await reloadCandidates(); };
+document.getElementById("relevantTabBtn").onclick = async () => { showView("relevant"); await reloadRelevant(); };
+document.getElementById("publicTabBtn").onclick = async () => { showView("public"); await reloadPublicProfiles(); };
+document.getElementById("logoutBtn").onclick = async () => {
+  try { await api("/api/auth/logout", { method: "POST", body: "{}" }); } catch (_) {}
+  auth = { authenticated: false, user: null, csrfToken: "" };
+  showView("auth");
+  await refreshAuth();
 };
 
-addFeedBtn.onclick = async () => {
-  const url = (newFeedUrl.value || "").trim();
-  if (!url) {
-    feedStatus.textContent = "Enter feed URL.";
-    return;
-  }
-  addFeedBtn.disabled = true;
-  feedStatus.textContent = "Adding feed...";
+document.getElementById("regBtn").onclick = async () => {
+  const username = document.getElementById("regUsername").value.trim();
+  const password = document.getElementById("regPassword").value;
+  const status = document.getElementById("authStatus");
+  status.textContent = "Registering...";
   try {
-    await post("/api/rss-feeds", { url });
-    newFeedUrl.value = "";
-    feedStatus.textContent = "Feed added.";
-    if (!feedsPanel.classList.contains("hidden")) {
-      await reloadFeeds();
+    await api("/api/auth/register", { method: "POST", body: JSON.stringify({ username, password }) });
+    await refreshAuth();
+    showView("candidates");
+    status.textContent = "Registered.";
+  } catch (e) { status.textContent = `Failed: ${e.message}`; }
+};
+
+document.getElementById("loginBtn").onclick = async () => {
+  const username = document.getElementById("loginUsername").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const status = document.getElementById("authStatus");
+  status.textContent = "Logging in...";
+  try {
+    await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    await refreshAuth();
+    showView("candidates");
+    status.textContent = "Logged in.";
+  } catch (e) { status.textContent = `Failed: ${e.message}`; }
+};
+
+const toggleCreateProfileBtn = document.getElementById("toggleCreateProfileBtn");
+const profileCreateBody = document.getElementById("profileCreateBody");
+toggleCreateProfileBtn.onclick = () => {
+  const hidden = profileCreateBody.classList.toggle("hidden");
+  toggleCreateProfileBtn.textContent = hidden ? "Show" : "Hide";
+};
+
+document.getElementById("createProfileBtn").onclick = async () => {
+  const payload = {
+    slug: document.getElementById("newProfileSlug").value.trim(),
+    name: document.getElementById("newProfileName").value.trim(),
+    description: document.getElementById("newProfileDescription").value.trim(),
+    visibility: document.getElementById("newProfileVisibility").value,
+    config: {
+      positiveKeywords: lines(document.getElementById("newProfilePos").value),
+      negativeTitleKeywords: lines(document.getElementById("newProfileNeg").value),
+      llmPrompt: `You are a strict classifier for this profile. Given title and abstract, respond with JSON only: {"relevant":true} when clearly relevant, otherwise {"relevant":false}.`,
+      sources: parseSources(document.getElementById("newProfileSources").value)
     }
-  } catch (e) {
-    feedStatus.textContent = `Failed: ${String(e.message || e)}`;
-  } finally {
-    addFeedBtn.disabled = false;
-  }
+  };
+  const status = document.getElementById("createProfileStatus");
+  status.textContent = "Creating...";
+  try {
+    await api("/api/profiles", { method: "POST", body: JSON.stringify(payload) });
+    resetCreateProfileForm();
+    await reloadProfiles();
+    showView("candidates");
+    status.textContent = "Created.";
+  } catch (e) { status.textContent = `Failed: ${e.message}`; }
 };
-function showTab(t) {
-  const isDigest = t === "digest";
-  const isPending = t === "pending";
-  const isConfig = t === "config";
-  digestView.classList.toggle("hidden", !isDigest);
-  pendingView.classList.toggle("hidden", !isPending);
-  configView.classList.toggle("hidden", !isConfig);
-  tabDigest.classList.toggle("active", isDigest);
-  tabPending.classList.toggle("active", isPending);
-  tabConfig.classList.toggle("active", isConfig);
-  if (isConfig && !configLoaded) {
-    reloadConfig();
-  }
-}
 
-async function post(url, body) {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
+document.getElementById("reloadCandidatesBtn").onclick = reloadCandidates;
+adminMetricsFilter.onchange = reloadCandidates;
 
-function saveCollapsed() {
-  localStorage.setItem("collapsedIrrelevant", JSON.stringify(Array.from(collapsed)));
-}
-
-function cardForDigest(p) {
-  const el = document.createElement("div");
-  el.className = "paper";
-  if (collapsed.has(String(p.id))) el.classList.add("collapsed");
-  const author = p.firstAuthor || "Unknown author";
-  const year = p.year || "Unknown year";
-  const href = p.url || "#";
-  el.innerHTML = `
-    <h3><a href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer">${escapeHTML(p.title)}</a></h3>
-    <div class="meta">${escapeHTML(String(year))} · ${escapeHTML(author)}</div>
-    <div class="summary">${escapeHTML((p.abstract || "").slice(0, 3000))}</div>
-    <div class="actions">
-      <button data-l="relevant">Mark relevant</button>
-      <button data-l="irrelevant">Mark irrelevant (collapse)</button>
-      <button data-l="unsure">Mark unsure</button>
-      <button data-a="deep-verify">Deep Verify</button>
-    </div>
-    <div class="deep-result"></div>
-  `;
-  el.querySelectorAll("button[data-l]").forEach(btn => {
-    btn.onclick = async () => {
-      const label = btn.getAttribute("data-l");
-      await post("/api/labels/main", { paperId: p.id, label });
-      if (label === "irrelevant") {
-        collapsed.add(String(p.id));
-        el.classList.add("collapsed");
-      } else {
-        collapsed.delete(String(p.id));
-        el.classList.remove("collapsed");
-      }
-      saveCollapsed();
-    };
+async function reloadCandidates() {
+  const status = document.getElementById("candidateStatus");
+  const list = document.getElementById("candidateList");
+  list.innerHTML = "";
+  if (!activeProfileId) { status.textContent = "Create/select a profile first."; return; }
+  status.textContent = "Loading candidates...";
+  const mode = adminMetricsFilter.value || "all";
+  const q = new URLSearchParams({
+    keywordOnly: String(mode === "keyword"),
+    llmRelevantOnly: String(mode === "llm"),
+    wouldAutoOnly: String(mode === "auto")
   });
-  bindDeepVerify(el, p.id);
-  renderDeepState(el, p.id);
-  return el;
-}
-
-function cardForPending(p) {
-  const el = document.createElement("div");
-  el.className = "paper";
-  const author = p.firstAuthor || "Unknown author";
-  const year = p.year || "Unknown year";
-  const href = p.url || "#";
-  el.innerHTML = `
-    <h3><a href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer">${escapeHTML(p.title)}</a></h3>
-    <div class="meta">${escapeHTML(String(year))} · ${escapeHTML(author)}</div>
-    <div class="summary">${escapeHTML((p.abstract || "").slice(0, 3000))}</div>
-    <div class="meta">LLM status: pending/failed${p.lastError ? (" · " + escapeHTML(p.lastError)) : ""}</div>
-    <div class="actions">
-      <button data-a="resolve-true">Resolve relevant</button>
-      <button data-a="resolve-false">Resolve irrelevant</button>
-      <button data-a="retry">Retry with LLM</button>
-      <button data-a="deep-verify">Deep Verify</button>
-    </div>
-    <div class="deep-result"></div>
-  `;
-  el.querySelector("button[data-a='resolve-true']").onclick = async () => {
-    await post("/api/pending/resolve", { paperId: p.id, relevant: true });
-    await reload();
-  };
-  el.querySelector("button[data-a='resolve-false']").onclick = async () => {
-    await post("/api/pending/resolve", { paperId: p.id, relevant: false });
-    await reload();
-  };
-  el.querySelector("button[data-a='retry']").onclick = async () => {
-    await post("/api/pending/retry", { paperId: p.id });
-    await reload();
-  };
-  bindDeepVerify(el, p.id);
-  renderDeepState(el, p.id);
-  return el;
-}
-
-async function reloadDigest() {
-  const r = await fetch("/api/digests?lookbackHours=72");
-  const data = await r.json();
-  digestView.innerHTML = "";
-  for (const g of data.groups || []) {
-    const panel = document.createElement("div");
-    panel.className = "window";
-    const st = new Date(g.window.start);
-    const en = new Date(g.window.end);
-    panel.innerHTML = `<div class="title">${st.toLocaleString()} — ${en.toLocaleString()}</div>`;
-    for (const p of (g.items || [])) panel.appendChild(cardForDigest(p));
-    digestView.appendChild(panel);
-  }
-}
-
-async function reloadPending() {
-  const r = await fetch("/api/pending");
-  const data = await r.json();
-  pendingView.innerHTML = "";
-  const panel = document.createElement("div");
-  panel.className = "window";
-  panel.innerHTML = `<div class="title">Pending review</div>`;
-  for (const p of (data.items || [])) panel.appendChild(cardForPending(p));
-  pendingView.appendChild(panel);
-}
-
-async function reload() {
-  if (deepVerifyInFlight > 0) {
-    return;
-  }
-  await Promise.all([reloadDigest(), reloadPending()]);
-  if (!feedsPanel.classList.contains("hidden")) {
-    await reloadFeeds();
-  }
-}
-
-async function reloadConfig() {
-  cfgStatus.textContent = "Loading configuration...";
   try {
-    const r = await fetch("/api/config");
-    const data = await r.json();
-    const cfg = data.config || {};
-    cfgDomain.value = cfg.domainName || "";
-    cfgPrompt.value = cfg.llmSystemPrompt || "";
-    cfgArxivQuery.value = cfg.arxivQuery || "";
-    cfgPosKeywords.value = linesFromArray(cfg.positiveKeywords || []);
-    cfgNegKeywords.value = linesFromArray(cfg.negativeTitleKeywords || []);
-    cfgRssFeeds.value = linesFromArray(data.rssFeeds || []);
-    configLoaded = true;
-    cfgStatus.textContent = "Configuration loaded.";
-  } catch (e) {
-    cfgStatus.textContent = `Failed to load config: ${String(e.message || e)}`;
-  }
-}
-
-cfgGenerateBtn.onclick = async () => {
-  const domain = (cfgGenerateDomain.value || cfgDomain.value || "").trim();
-  if (!domain) {
-    cfgStatus.textContent = "Enter a domain to generate configuration.";
-    return;
-  }
-  cfgGenerateBtn.disabled = true;
-  cfgStatus.textContent = "Generating...";
-  try {
-    const res = await post("/api/config/generate", { domain });
-    const cfg = res.config || {};
-    cfgDomain.value = cfg.domainName || domain;
-    cfgPrompt.value = cfg.llmSystemPrompt || "";
-    cfgArxivQuery.value = cfg.arxivQuery || "";
-    cfgPosKeywords.value = linesFromArray(cfg.positiveKeywords || []);
-    cfgNegKeywords.value = linesFromArray(cfg.negativeTitleKeywords || []);
-    if ((res.suggestedRssFeeds || []).length > 0) {
-      cfgRssFeeds.value = linesFromArray(res.suggestedRssFeeds);
+    const data = await api(`/api/profiles/${activeProfileId}/analysis/candidates?` + q.toString());
+    for (const p of (data.items || [])) {
+      const el = document.createElement("div");
+      el.className = "paper";
+      const url = p.url || "#";
+      el.innerHTML = `
+        <h3><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(p.title || ("Paper #" + p.paperId))}</a></h3>
+        <div class="muted">${esc(String(p.year || "Unknown"))} · ${esc(p.firstAuthor || "Unknown")}</div>
+        <div class="summary">${esc((p.abstract || "").slice(0, 3000))}</div>
+        <div class="row">
+          <button data-a="pdf">Download PDF</button>
+          <button data-a="relevant">Add to Relevant</button>
+        </div>
+        <div class="badge ${auth.user && auth.user.isAdmin ? "" : "hidden"}">
+          keywordPass=${p.keywordPass} · llmRelevant=${p.llmRelevant === null || p.llmRelevant === undefined ? "n/a" : p.llmRelevant} · shadowScore=${Number(p.shadowScore || 0).toFixed(3)} · wouldAutoDownload=${p.shadowWouldAutoDownload}
+        </div>
+      `;
+      el.querySelector("button[data-a='pdf']").onclick = () => {
+        window.open(buildPDFURL(url), "_blank");
+      };
+      el.querySelector("button[data-a='relevant']").onclick = () => openRelevantModal(p);
+      list.appendChild(el);
     }
-    cfgStatus.textContent = "Generated. Review and save.";
+    status.textContent = `Loaded ${data.items ? data.items.length : 0} candidates.`;
   } catch (e) {
-    cfgStatus.textContent = `Generate failed: ${String(e.message || e)}`;
-  } finally {
-    cfgGenerateBtn.disabled = false;
+    status.textContent = `Failed: ${e.message}`;
   }
-};
+}
 
-cfgSaveBtn.onclick = async () => {
-  cfgSaveBtn.disabled = true;
-  cfgStatus.textContent = "Saving...";
+document.getElementById("reloadRelevantBtn").onclick = reloadRelevant;
+document.getElementById("relevantTagFilter").onchange = reloadRelevant;
+
+async function reloadRelevant() {
+  const list = document.getElementById("relevantList");
+  list.innerHTML = "";
+  if (!activeProfileId) return;
+  const tag = document.getElementById("relevantTagFilter").value.trim();
+  const data = await api(`/api/profiles/${activeProfileId}/likes?tag=${encodeURIComponent(tag)}`);
+  for (const p of (data.items || [])) {
+    const el = document.createElement("div");
+    el.className = "paper";
+    el.innerHTML = `
+      <h3><a href="${esc(p.url || "#")}" target="_blank">${esc(p.title)}</a></h3>
+      <div class="summary">${esc((p.abstract || "").slice(0, 1200))}</div>
+      <div class="muted">${esc(p.note || "")}</div>
+      <div class="tags">${(p.tags || []).map(t => "#" + esc(t)).join(" ")}</div>
+      <div class="row">
+        <button data-a="pdf">Download PDF</button>
+        <button data-a="remove">Remove from Relevant</button>
+      </div>
+    `;
+    el.querySelector("button[data-a='pdf']").onclick = () => window.open(`/api/public/papers/${p.id}/pdf`, "_blank");
+    el.querySelector("button[data-a='remove']").onclick = async () => {
+      await api(`/api/profiles/${activeProfileId}/likes/${p.id}`, { method: "DELETE", body: "{}" });
+      await reloadRelevant();
+    };
+    list.appendChild(el);
+  }
+}
+
+async function reloadPublicProfiles() {
+  const q = document.getElementById("publicSearchQ").value.trim();
+  const data = await api(`/api/public/profiles?q=${encodeURIComponent(q)}`);
+  const list = document.getElementById("publicProfilesList");
+  list.innerHTML = "";
+  for (const p of (data.items || [])) {
+    const el = document.createElement("div");
+    el.className = "paper";
+    el.innerHTML = `
+      <h3>${esc(p.name)} <span class="muted">/u/${esc(p.username)}/${esc(p.slug)}</span></h3>
+      <div class="muted">${esc(p.description || "")}</div>
+      <button data-a="open">Open</button>
+    `;
+    el.querySelector("button[data-a='open']").onclick = () => window.open(`/api/public/u/${encodeURIComponent(p.username)}/${encodeURIComponent(p.slug)}`, "_blank");
+    list.appendChild(el);
+  }
+}
+document.getElementById("publicSearchBtn").onclick = reloadPublicProfiles;
+
+const modalBg = document.getElementById("relevantModalBg");
+function openRelevantModal(paper) {
+  pendingRelevantPaper = paper;
+  document.getElementById("relevantModalTitle").textContent = `Add to Relevant: ${paper.title || ("Paper #" + paper.paperId)}`;
+  document.getElementById("relevantTagsInput").value = "";
+  document.getElementById("relevantNoteInput").value = "";
+  document.getElementById("relevantModalStatus").textContent = "";
+  modalBg.style.display = "flex";
+}
+document.getElementById("cancelRelevantBtn").onclick = () => { modalBg.style.display = "none"; };
+document.getElementById("confirmRelevantBtn").onclick = async () => {
+  if (!pendingRelevantPaper || !activeProfileId) return;
+  const tags = (document.getElementById("relevantTagsInput").value || "").split(",").map(v => v.trim()).filter(Boolean);
+  const note = (document.getElementById("relevantNoteInput").value || "").trim();
+  const status = document.getElementById("relevantModalStatus");
+  status.textContent = "Adding...";
   try {
-    await post("/api/config", {
-      domainName: (cfgDomain.value || "").trim(),
-      llmSystemPrompt: (cfgPrompt.value || "").trim(),
-      arxivQuery: (cfgArxivQuery.value || "").trim(),
-      positiveKeywords: arrayFromLines(cfgPosKeywords.value || ""),
-      negativeTitleKeywords: arrayFromLines(cfgNegKeywords.value || ""),
-      rssFeeds: arrayFromLines(cfgRssFeeds.value || "")
+    await api(`/api/profiles/${activeProfileId}/likes`, {
+      method: "POST",
+      body: JSON.stringify({ paperId: pendingRelevantPaper.paperId, tags, note })
     });
-    cfgStatus.textContent = "Saved.";
-    if (!feedsPanel.classList.contains("hidden")) {
-      await reloadFeeds();
-    }
+    status.textContent = "Added to Relevant.";
+    modalBg.style.display = "none";
+    await reloadRelevant();
   } catch (e) {
-    cfgStatus.textContent = `Save failed: ${String(e.message || e)}`;
-  } finally {
-    cfgSaveBtn.disabled = false;
+    status.textContent = `Failed: ${e.message}`;
   }
 };
 
-function bindDeepVerify(el, paperId) {
-  const btn = el.querySelector("button[data-a='deep-verify']");
-  const out = el.querySelector(".deep-result");
-  if (!btn || !out) return;
-  btn.onclick = async () => {
-    const state = deepState.get(paperId);
-    if (state && state.status === "running") return;
-    deepState.set(paperId, { status: "running", message: "Deep verifying..." });
-    deepVerifyInFlight++;
-    renderDeepState(el, paperId);
-    try {
-      const res = await post(`/api/papers/${paperId}/deep-verify`, {});
-      deepState.set(paperId, {
-        status: "done",
-        message: `Deep Verify: ${res.useful ? "useful" : "not useful"}${res.reason ? (" — " + res.reason) : ""}`
-      });
-    } catch (e) {
-      deepState.set(paperId, {
-        status: "error",
-        message: `Deep Verify failed: ${String(e.message || e)}`
-      });
-    } finally {
-      if (deepVerifyInFlight > 0) deepVerifyInFlight--;
-      renderDeepState(el, paperId);
-    }
-  };
-}
-
-function renderDeepState(el, paperId) {
-  const out = el.querySelector(".deep-result");
-  const btn = el.querySelector("button[data-a='deep-verify']");
-  if (!out || !btn) return;
-  const state = deepState.get(paperId);
-  if (!state || state.status === "idle") {
-    out.textContent = "";
-    btn.disabled = false;
-    return;
+function parseSources(s) {
+  const out = [];
+  for (const line of lines(s)) {
+    const i = line.indexOf(":");
+    if (i <= 0) continue;
+    const t = line.slice(0, i).trim();
+    const v = line.slice(i + 1).trim();
+    if (!v) continue;
+    out.push({ sourceType: t, sourceValue: v, enabled: true });
   }
-  out.textContent = state.message || "";
-  btn.disabled = state.status === "running";
+  return out;
+}
+function lines(s) { return String(s || "").split("\n").map(v => v.trim()).filter(Boolean); }
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c])); }
+function buildPDFURL(url) {
+  const raw = String(url || "").trim();
+  if (!raw) return "#";
+  if (raw.toLowerCase().endsWith(".pdf")) return raw;
+  if (raw.includes("arxiv.org/abs/")) return raw.replace("arxiv.org/abs/", "arxiv.org/pdf/") + ".pdf";
+  return raw;
 }
 
-async function reloadFeeds() {
-  const r = await fetch("/api/rss-feeds");
-  const data = await r.json();
-  feedsList.innerHTML = "";
-  for (const f of (data.items || [])) {
-    const li = document.createElement("li");
-    li.textContent = f.url + (f.enabled ? "" : " (disabled)");
-    feedsList.appendChild(li);
-  }
-  if ((data.items || []).length === 0) {
-    const li = document.createElement("li");
-    li.textContent = "No RSS feeds configured.";
-    feedsList.appendChild(li);
-  }
-}
-
-function escapeHTML(s) {
-  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
-}
-
-function escapeAttr(s) {
-  return escapeHTML(s);
-}
-
-function toDateInput(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function linesFromArray(items) {
-  return (items || []).join("\n");
-}
-
-function arrayFromLines(s) {
-  return String(s || "")
-    .split("\n")
-    .map(v => v.trim())
-    .filter(Boolean);
-}
-
-reload();
-setInterval(() => {
-  if (deepVerifyInFlight === 0) {
-    reload();
-  }
-}, 60000);
+resetCreateProfileForm();
+refreshAuth()
+  .then(async () => {
+    if (auth.authenticated) showView("candidates");
+    else showView("auth");
+    await reloadPublicProfiles();
+  })
+  .catch(() => showView("auth"));
 </script>
 </body>
 </html>

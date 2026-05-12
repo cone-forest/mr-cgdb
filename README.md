@@ -1,54 +1,60 @@
 # mr-cgdb
 
-Localhost scientific paper router for computer graphics.
+Local-first scientific paper platform with multi-user auth and profile-based curation.
 
-Pipeline: `arxiv/rss watchers -> dedup -> keyword -> pipeline(embed+shadow+llm) -> postgres -> ui/api`.
+## Current model (Phase 1)
 
-Keyword stage supports title-only negative filters via `NEGATIVE_TITLE_KEYWORDS` (default: `gaussian,splatt`).
+- Users register/login with `username + password`.
+- Each user can create multiple research profiles (`public` or `private`).
+- Profiles hold manual paper relevance selections with optional notes/tags.
+- Public profiles are discoverable and browsable by other users.
+- Liking a paper enqueues a PDF download job into local cache.
+- Cached PDFs are publicly accessible only when paper is present in at least one public profile.
+- Failed jobs are visible with error reason and manually retryable.
+
+Legacy global relevance endpoints (`/api/digests`, `/api/pending`, label/resolve/retry) now return `410 Gone`.
 
 ## Run
-
-1. Ensure Docker + Compose are installed.
-2. Optionally edit:
-   - `config/keywords.txt`
-   - `config/seeds_positive.txt` (BibTeX entries, one or more `@...{...}` blocks)
-   - `config/seeds_negative.txt` (BibTeX entries, auto-appended from UI irrelevant labels)
-   - `RSS_FEEDS` in `docker-compose.yml`
-3. Start:
 
 ```bash
 docker compose up --build
 ```
 
-4. Open:
-   - UI: <http://localhost:8080>
-   - (Optional) Ollama API is internal to Compose by default.
+Open UI at <http://localhost:8080>.
 
-If models are not present yet, pull once after startup:
+## Services
 
-```bash
-docker compose exec ollama ollama pull nomic-embed-text
-docker compose exec ollama ollama pull llama3.2:1b
-```
+- `postgres`
+- `dedup`, `keyword`, `pipeline`, `arxiv-watcher`, `rss-watcher` (ingestion path)
+- `api` (auth/profile/public API + UI hosting)
+- `worker` (PDF download jobs + cache cleanup)
+- `ollama` (local model service for pipeline/deep verify paths)
 
-NVIDIA GPU forwarding for Ollama is enabled in `docker-compose.yml` (`gpus: all`).
+## Auth/Profile API (core)
 
-## API
-
-- `GET /api/digests?lookbackHours=72`
-- `GET /api/pending`
-- `POST /api/labels/main` body: `{ "paperId": 123, "label": "irrelevant" }`
-- `POST /api/pending/resolve` body: `{ "paperId": 123, "relevant": true }`
-- `POST /api/pending/retry` body: `{ "paperId": 123 }`
-- `POST /api/scan/arxiv-range` body: `{ "from": "2026-01-01", "to": "2026-01-31" }`
-- `POST /api/scan/clear` body: `{}`
-- `POST /api/papers/{id}/deep-verify` body: `{}`
-  - Runs chunked full-text verification (when PDF text is available) and returns concise reasoning.
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+- `GET /api/profiles/me`
+- `POST /api/profiles`
+- `PATCH /api/profiles/{id}`
+- `DELETE /api/profiles/{id}`
+- `POST /api/profiles/{id}/access`
+- `POST /api/profiles/{id}/analysis/backfill`
+- `GET /api/profiles/{id}/analysis/candidates`
+- `GET /api/public/profiles`
+- `GET /api/public/u/{username}/{slug}`
+- `POST /api/profiles/{id}/likes`
+- `PATCH /api/profiles/{id}/likes/{paperId}`
+- `DELETE /api/profiles/{id}/likes/{paperId}`
+- `GET /api/public/papers/{id}/pdf`
+- `GET /api/jobs/failures`
+- `POST /api/jobs/{id}/retry`
 
 ## Notes
 
-- Digest uses rolling 12-hour groups.
-- Main-list labels are telemetry only.
-- Pending labels are authoritative and move paper out of pending.
-- Embedding shadow metrics are logged but do not gate in v1.
-- Positive/negative seed sets are separate; UI irrelevant labels append to negative seed file.
+- CSRF token is required on mutating authenticated endpoints (`X-CSRF-Token` header).
+- First registered account is automatically marked admin.
+- PDF cache cleanup removes files not referenced by any profile like for 3+ days.
+- Profile configuration is profile-local; there is no global inherited config hierarchy.
